@@ -70,7 +70,7 @@ function projectDirs() {
 const launch = (dir: string) => writeFileSync(join(dir, ".lax-launch.json"), JSON.stringify({ start: "npm run dev", ready_url: "http://localhost:5173" }));
 
 function input(scenarios: string, dirs: { base: string; worktree: string }, extra: Record<string, unknown> = {}) {
-  return { chunk: plan(scenarios).chunks[0], rawReport: "STATUS: done", preSha: "abc", projectDir: dirs.worktree, baseProjectDir: dirs.base, ...extra };
+  return { chunk: plan(scenarios).chunks[0], claim: "Status: done", preSha: "abc", projectDir: dirs.worktree, baseProjectDir: dirs.base, ...extra };
 }
 
 const report = (file: string, score: number) => ({
@@ -270,14 +270,15 @@ describe("chunkJudgingSummary", () => {
 });
 
 describe("the judge stage in the chunk review", () => {
-  const CLEAN = "STATUS: done\nDONE_WHEN: met\nCHANGED: src/cart.ts\nTESTS: 2/2\nNEW_FAILURES: none\nPRE_EXISTING_FAILURES: none\nSPEC_GAPS: none\nLAUNCH_READINESS: none\nNOTE: clean.";
-  const BLOCKED = CLEAN.replace("STATUS: done", "STATUS: blocked").replace("DONE_WHEN: met", "DONE_WHEN: unmet");
+  type Report = import("../agents/agent-report.js").ChunkReportCall;
+  const CLEAN: Report = { status: "done", doneWhen: "met", note: "clean.", specGaps: "", launchReadiness: [], machineBlocked: [], ownerQuestion: "" };
+  const BLOCKED: Report = { ...CLEAN, status: "blocked", doneWhen: "unmet" };
   const noBuild = async () => null;
 
-  function review(rawReport: string, judge: () => Promise<ChunkJudging>, opts: { hook?: () => Promise<{ specGap: string; reasoning: string } | null>; buildExec?: () => Promise<unknown> } = {}) {
+  function review(report: Report, judge: () => Promise<ChunkJudging>, opts: { hook?: () => Promise<{ specGap: string; reasoning: string } | null>; buildExec?: () => Promise<unknown> } = {}) {
     const p = plan("2");
     return runChunkReviewWithJudgment({
-      chunk: p.chunks[0], allChunks: p.chunks, plan: p, rawReport, projectDir: "/proj",
+      chunk: p.chunks[0], allChunks: p.chunks, plan: p, report, projectDir: "/proj",
       chunkJudge: { judge: vi.fn(judge), preSha: "abc", baseProjectDir: "/proj" },
     }, opts.hook, undefined, (opts.buildExec ?? noBuild) as never);
   }
@@ -294,12 +295,12 @@ describe("the judge stage in the chunk review", () => {
     const judge = vi.fn(async () => judging());
     const p = plan("2");
     const halted = await runChunkReviewWithJudgment({
-      chunk: p.chunks[0], allChunks: p.chunks, plan: p, rawReport: BLOCKED, projectDir: "/proj",
+      chunk: p.chunks[0], allChunks: p.chunks, plan: p, report: BLOCKED, projectDir: "/proj",
       chunkJudge: { judge, preSha: "abc", baseProjectDir: "/proj" },
     }, undefined, undefined, noBuild);
     expect(halted.action).not.toBe("proceed");
     const buildFailed = await runChunkReviewWithJudgment({
-      chunk: p.chunks[0], allChunks: p.chunks, plan: p, rawReport: CLEAN, projectDir: "/proj",
+      chunk: p.chunks[0], allChunks: p.chunks, plan: p, report: CLEAN, projectDir: "/proj",
       chunkJudge: { judge, preSha: "abc", baseProjectDir: "/proj" },
     }, undefined, undefined, async () => ({ gate: "build-exec", action: "halt", reasoning: "npm test failed" }));
     expect(buildFailed.action).toBe("halt");
@@ -310,14 +311,14 @@ describe("the judge stage in the chunk review", () => {
   // STATUS=partial: no judge had seen that code (2026-11-25).
   it("a chunk sent back before its judge ran is marked unjudged, so the lead cannot land it on accept", async () => {
     const judge = vi.fn(async () => judging());
-    const PARTIAL = CLEAN.replace("STATUS: done", "STATUS: partial").replace("DONE_WHEN: met", "DONE_WHEN: unmet");
+    const PARTIAL: Report = { ...CLEAN, status: "partial", doneWhen: "unmet" };
     const partial = await review(PARTIAL, judge);
     expect(partial.action).toBe("push_back");
     expect(partial.findings.at(-1)?.gate).toBe("chunk-unjudged");
     expect(judge).not.toHaveBeenCalled();
     const p = plan("2");
     const noJudge = await runChunkReviewWithJudgment({
-      chunk: p.chunks[0], allChunks: p.chunks, plan: p, rawReport: PARTIAL, projectDir: "/proj",
+      chunk: p.chunks[0], allChunks: p.chunks, plan: p, report: PARTIAL, projectDir: "/proj",
     }, undefined, undefined, noBuild);
     expect(noJudge.findings.some((f) => f.gate === "chunk-unjudged")).toBe(false);
   });
@@ -365,7 +366,7 @@ describe("the judge stage in the chunk review", () => {
 });
 
 describe("a chunk that closes a phase", () => {
-  const CLEAN = "STATUS: done\nDONE_WHEN: met\nCHANGED: src/cart.ts\nTESTS: 2/2\nNEW_FAILURES: none\nPRE_EXISTING_FAILURES: none\nSPEC_GAPS: none\nLAUNCH_READINESS: none\nNOTE: clean.";
+  const CLEAN = { status: "done", doneWhen: "met", note: "clean.", specGaps: "", launchReadiness: [], machineBlocked: [], ownerQuestion: "" } as const;
   const gated = parsePlanText([
     "# Plan",
     "## Phase A — Core",
@@ -380,7 +381,7 @@ describe("a chunk that closes a phase", () => {
     "- Phase A: scenarios 1-3 pass.",
   ].join("\n"));
   const review = (judge: () => Promise<ChunkJudging>) => runChunkReviewWithJudgment({
-    chunk: gated.chunks[0], allChunks: gated.chunks, plan: gated, rawReport: CLEAN, projectDir: "/proj",
+    chunk: gated.chunks[0], allChunks: gated.chunks, plan: gated, report: { ...CLEAN, launchReadiness: [], machineBlocked: [] }, projectDir: "/proj",
     chunkJudge: { judge: vi.fn(judge), preSha: "abc", baseProjectDir: "/proj" },
   }, undefined, undefined, async () => null);
 

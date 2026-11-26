@@ -25,33 +25,26 @@ function agentResult(over: Partial<ChunkAgentResult> = {}): ChunkAgentResult {
   return { exitCode: 0, stdout: "", error: undefined, durationMs: 100, ...over } as ChunkAgentResult;
 }
 
-const BLOCKED_REPORT = [
-  "STATUS: blocked",
-  "DONE_WHEN: unmet",
-  "CHANGED: none",
-  "TESTS: n/a",
-  "NEW_FAILURES: none",
-  "PRE_EXISTING_FAILURES: none",
-  "SPEC_GAPS: none",
-  "LAUNCH_READINESS: none",
-  "NOTE: write/bash blocked by tool-policy (workspace-write forbidden)",
-].join("\n");
+const BLOCKED_REPORT: NonNullable<ChunkAgentResult["chunkReport"]> = {
+  status: "blocked", doneWhen: "unmet", note: "write/bash blocked by tool-policy (workspace-write forbidden)",
+  specGaps: "", launchReadiness: [], machineBlocked: [], ownerQuestion: "",
+};
 
 describe("runPreflightProbe fail details carry worker evidence", () => {
-  it("echo file missing → detail names tool-policy as a candidate AND quotes the worker's NOTE", async () => {
+  it("echo file missing → detail names tool-policy as a candidate AND quotes the worker's note", async () => {
     const res = await runPreflightProbe(
       { projectDir },
-      async () => agentResult({ stdout: BLOCKED_REPORT }),
+      async () => agentResult({ chunkReport: BLOCKED_REPORT }),
     );
     expect(res.status).toBe("fail");
     if (res.status !== "fail") return;
     expect(res.contract).toBe("file-write-anchoring");
     expect(res.detail).toContain("tool-policy denial");
-    expect(res.detail).toContain("STATUS: blocked");
+    expect(res.detail).toContain("Worker's own report: blocked.");
     expect(res.detail).toContain("workspace-write forbidden");
   });
 
-  it("echo file missing with an unparseable worker reply → detail falls back to the output tail", async () => {
+  it("echo file missing and no report from the worker → detail falls back to the output tail", async () => {
     const res = await runPreflightProbe(
       { projectDir },
       async () => agentResult({ stdout: "I could not create the file because policy denied it." }),
@@ -71,7 +64,7 @@ describe("runPreflightProbe fail details carry worker evidence", () => {
         const token = readFileSync(join(projectDir, PREFLIGHT_FILES.sentinel), "utf-8").trim();
         writeFileSync(join(projectDir, PREFLIGHT_FILES.echo), token + "\n");
         void opts;
-        return agentResult({ stdout: BLOCKED_REPORT });
+        return agentResult({ chunkReport: BLOCKED_REPORT });
       },
     );
     expect(res.status).toBe("fail");
@@ -91,7 +84,7 @@ describe("runPreflightProbe fail details carry worker evidence", () => {
       { projectDir, parentSessionId: "chat-session-1", parentOpId: "orchestrator-op-77" },
       async (opts) => {
         seen = { parentSessionId: opts.parentSessionId, parentOpId: opts.parentOpId };
-        return agentResult({ stdout: BLOCKED_REPORT });
+        return agentResult({ chunkReport: BLOCKED_REPORT });
       },
     );
     expect(seen).toEqual({ parentSessionId: "chat-session-1", parentOpId: "orchestrator-op-77" });
@@ -104,9 +97,7 @@ describe("runPreflightProbe fail details carry worker evidence", () => {
         const token = readFileSync(join(projectDir, PREFLIGHT_FILES.sentinel), "utf-8").trim();
         writeFileSync(join(projectDir, PREFLIGHT_FILES.echo), token + "\n");
         writeFileSync(join(projectDir, PREFLIGHT_FILES.bash), token + "\n");
-        return agentResult({
-          stdout: BLOCKED_REPORT.replace("STATUS: blocked", "STATUS: done").replace("DONE_WHEN: unmet", "DONE_WHEN: met"),
-        });
+        return agentResult({ chunkReport: { ...BLOCKED_REPORT, status: "done", doneWhen: "met" } });
       },
     );
     expect(res.status).toBe("pass");

@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 74 top-level dirs · 74 live · 0 with no live importer · 2195 non-test source files · 59 oversized · 277 nearing the size cap.
+**Totals:** 74 top-level dirs · 74 live · 0 with no live importer · 2194 non-test source files · 59 oversized · 276 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -66,7 +66,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/app-scaffold/` | 12 | 7 | M |  |
 | `src/ari-kernel/` | 12 | 12 | M |  |
 | `src/integrations/` | 12 | 15 | M |  |
-| `src/auto-build/` | 11 | 86 | XL | 1 |
+| `src/auto-build/` | 11 | 85 | XL | 1 |
 | `src/whatsapp-bridge/` | 11 | 8 | M | 1 |
 | `src/agent-guards/` | 10 | 13 | L |  |
 | `src/calendar/` | 10 | 10 | M |  |
@@ -467,7 +467,6 @@ job. Comments are free: never cut them to fit.
 - `src/anthropic-client/warm-pool/stream-prompt.ts#processFrame` — 70+ own code lines (cap 100)
 - `src/anthropic-client/warm-pool/stream-prompt.ts#streamViaWarmPool` — 70+ own code lines (cap 100)
 - `src/ari-kernel/evaluate.ts#ariEvaluate` — 70+ own code lines (cap 100)
-- `src/auto-build/chunk-review/gate-done-when.ts#gateDoneWhen` — 70+ own code lines (cap 100)
 - `src/auto-build/loop/handle-action.ts#handleAction` — 70+ own code lines (cap 100)
 - `src/autopilot/validate.ts#validateRound` — 70+ own code lines (cap 100)
 - `src/browser/in-app-resolve-scripts.ts#textSearchScript` — 70+ own code lines (cap 100)

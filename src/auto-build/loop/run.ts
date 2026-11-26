@@ -6,7 +6,7 @@
  *   task     = buildChunkTask(chunk, sharpenedContext, retryReason?)
  *   result   = runChunkAgent({ role, task, … })   // canonical agent path
  *   specDiff = git diff <pre-sha> -- spec/
- *   review   = runChunkReview(chunk, plan, result.stdout, specDiff)
+ *   review   = runChunkReview(chunk, plan, result.chunkReport, files git says changed, specDiff)
  *
  *   proceed     → commit; advance
  *   amend_spec  → apply additive spec edit; commit separately; advance

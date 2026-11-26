@@ -1,14 +1,12 @@
 /**
  * Build-execution gate — the missing "run it, don't trust the report" check.
  *
- * Every other gate in this directory reasons over STRINGS THE AGENT TYPED
- * (report.status, report.testsPass, report.newFailures). A chunk that
- * confidently writes `STATUS: done / DONE_WHEN: met / TESTS: 5/5` about a
- * broken build sails through all of them. This gate is the one that observes
+ * A worker's report is its own account. A chunk whose worker reports done
+ * about a broken build would land on that account alone. This gate observes
  * behavior instead of trusting attestation:
  *
  *   1. Run the project's real build/test command (npm scripts) and read the
- *      ACTUAL exit code — not report.testsPass. A non-zero build or test run
+ *      ACTUAL exit code, never a count the worker gave. A non-zero build or test run
  *      sends the chunk back to its builder (push_back: the loop's fix
  *      rounds), naming the failing command + output tail.
  *   2. If the build produced a static entry (index.html), serve its folder at

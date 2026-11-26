@@ -78,28 +78,10 @@ export function buildBreakerTask(persona: Persona): string {
     `Read the code, run the app's tests and your own probes, and show each finding: the input or case, ` +
     `file:line, and how you showed it. A finding you ran beats one you traced. Report only what you found ` +
     `from your angle; do not fix anything.\n\n` +
-    `End with exactly this block, column-0 lines, nothing after:\n\n` +
-    `FINDINGS:\n- [critical|high|medium|low] <what breaks, the input or case, file:line, how you showed it>\n` +
-    `(one "- " line per finding, at most ${MAX_FINDINGS}; or "FINDINGS: none")`
+    `End by calling breaker_findings with what you found, most serious first, at most ${MAX_FINDINGS}: each ` +
+    `with its severity and what breaks (the input or case, file:line, how you showed it). An empty list when ` +
+    `nothing broke.`
   );
-}
-
-/** Read the FINDINGS block from the agent's last message. The last FINDINGS
- *  line wins (an agent may quote the format first). No block → null: the
- *  persona did not report, which is not a clean app. */
-export function parseBreakerFindings(raw: string): BreakerFinding[] | null {
-  const lines = raw.split(/\r?\n/);
-  let at = -1;
-  for (let i = 0; i < lines.length; i++) if (/^\s*\**FINDINGS\**\s*:/i.test(lines[i])) at = i;
-  if (at < 0) return null;
-  const inline = lines[at].replace(/^\s*\**FINDINGS\**\s*:\s*\**\s*/i, "").trim();
-  if (/^\(?none\)?\.?$/i.test(inline)) return [];
-  const findings: BreakerFinding[] = [];
-  for (const line of lines.slice(at + 1)) {
-    const m = line.match(/^\s*[-*•]\s*\[?(critical|high|medium|low)\]?\s*[:—-]?\s*(.+)$/i);
-    if (m) findings.push({ severity: m[1].toLowerCase() as Severity, text: m[2].trim() });
-  }
-  return findings.slice(0, MAX_FINDINGS);
 }
 
 export interface RunBreakersInput {
@@ -119,7 +101,7 @@ export async function runBreakers(input: RunBreakersInput): Promise<BreakerResul
   const ownFolder = !existsSync(probes);
   try {
     return await Promise.all(PERSONAS.map(async (persona): Promise<BreakerResult> => {
-      const result = await run({
+      const ask = () => run({
         role: "finish-breaker",
         task: buildBreakerTask(persona),
         title: `Break it (${persona.name}): the finished app`,
@@ -128,12 +110,13 @@ export async function runBreakers(input: RunBreakersInput): Promise<BreakerResul
         parentSessionId: input.parentSessionId,
         parentOpId: input.parentOpId,
       });
-      if (result.exitCode !== 0) {
-        return { persona: persona.name, status: "not-run", findings: [], note: `did not finish (exit ${result.exitCode}${result.error ? `: ${result.error}` : ""})` };
-      }
-      const findings = parseBreakerFindings(result.stdout);
-      if (!findings) return { persona: persona.name, status: "not-run", findings: [], note: "gave no FINDINGS block" };
-      return { persona: persona.name, status: "ran", findings };
+      // What it delivered stands however its run then ended. One that
+      // delivered nothing is asked once more, like a skeptic that did not answer.
+      let result = await ask();
+      if (!result.breakerFindings && !input.signal?.aborted) result = await ask();
+      if (result.breakerFindings) return { persona: persona.name, status: "ran", findings: result.breakerFindings.findings.slice(0, MAX_FINDINGS) };
+      const why = result.exitCode !== 0 ? `did not finish (exit ${result.exitCode}${result.error ? `: ${result.error}` : ""})` : "ended its run without reporting its findings";
+      return { persona: persona.name, status: "not-run", findings: [], note: why };
     }));
   } finally {
     if (ownFolder) rmSync(probes, { recursive: true, force: true });

@@ -60,8 +60,8 @@ export const FINISH_FIX_BAR_BLOCK =
   `only when you show one of:\n` +
   FINISH_FIX_BREAK_GROUNDS.map((ground, i) => `${i + 1}. ${ground};\n`).join("") +
   `\nEverything else is a FOLLOW-UP, including a problem that was already in the app before this chunk (it ` +
-  `reproduces at the starting commit) and is none of the above. On BROKEN, start the GROUND line with the ` +
-  `number of the ground you showed (\`GROUND: 3 — ...\`).\n\n`;
+  `reproduces at the starting commit) and is none of the above. For a broken verdict, start \`ground\` with ` +
+  `the number of the ground you showed ("3 — ...").\n\n`;
 
 /**
  * Whether a BROKEN finish fix leaves the app no worse than before it: the

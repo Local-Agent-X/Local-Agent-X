@@ -17,7 +17,7 @@
 
 import type { ParsedChunk } from "./plan-parser.js";
 import type { ChunkAgentRole } from "./agents/chunk-runner.js";
-import type { ChunkReport } from "./chunk-review/report-parser.js";
+import type { ChunkReport } from "./chunk-review/chunk-report.js";
 
 export type Skill = "senior-engineer" | "vibe-code";
 

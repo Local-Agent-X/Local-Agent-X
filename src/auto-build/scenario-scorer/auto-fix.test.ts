@@ -7,6 +7,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const { runChunkAgent } = vi.hoisted(() => ({ runChunkAgent: vi.fn() }));
 vi.mock("../agents/chunk-runner.js", () => ({ runChunkAgent }));
+vi.mock("../git-helpers.js", () => ({ gitAdd: vi.fn(async () => {}) }));
+vi.mock("../loop-effects.js", () => ({ commitChunk: vi.fn(async () => ({ committed: true, sha: "abc1234" })) }));
 
 import { runAutoFixWorker } from "./auto-fix.js";
 import type { ParsedChunk } from "../plan-parser.js";
@@ -55,5 +57,21 @@ describe("runAutoFixWorker (AB-3)", () => {
       parentSessionId: "chat-session-1",
       parentOpId: "orchestrator-op-77",
     });
+  });
+
+  // The fix worker ends by calling chunk_report, so its last words are empty.
+  // Read as "no output", a fix whose run was then marked failed was thrown
+  // away with its work still in the tree.
+  it("a worker that reported has finished, and its note is what it said", async () => {
+    const chunkReport = { status: "done", doneWhen: "met", note: "the total now rounds half up", specGaps: "", launchReadiness: [], machineBlocked: [], ownerQuestion: "" };
+    runChunkAgent.mockResolvedValue({ exitCode: 1, stdout: "", durationMs: 1, error: "ended on a promise", chunkReport });
+    const fix = await runAutoFixWorker({ projectDir: "/tmp/lax-scenario-project", chunk, failedReports: [], allReports: [] });
+    expect(fix).toMatchObject({ workerCompleted: true, workerReport: "the total now rounds half up", fixSha: "abc1234" });
+  });
+
+  it("a worker that neither reported nor said anything did not finish", async () => {
+    runChunkAgent.mockResolvedValue({ exitCode: 1, stdout: "", durationMs: 1, error: "boom" });
+    const fix = await runAutoFixWorker({ projectDir: "/tmp/lax-scenario-project", chunk, failedReports: [], allReports: [] });
+    expect(fix).toMatchObject({ workerCompleted: false, fixSha: null, workerReport: "boom" });
   });
 });

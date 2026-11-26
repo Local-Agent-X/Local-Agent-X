@@ -5,18 +5,14 @@ import {
   buildChunkTask,
   distillSharpenedContext,
 } from "../src/auto-build/skill-mapper.js";
-import { parseChunkReport } from "../src/auto-build/chunk-review/report-parser.js";
+import { chunkReportOf } from "../src/auto-build/chunk-review/chunk-report.js";
 import type { ParsedChunk } from "../src/auto-build/plan-parser.js";
 
 const reportWith = (fields: { specGaps?: string; note?: string }) =>
-  parseChunkReport(
-    [
-      "STATUS: done",
-      "DONE_WHEN: met",
-      `SPEC_GAPS: ${fields.specGaps ?? "none"}`,
-      `NOTE: ${fields.note ?? "none"}`,
-    ].join("\n"),
-  );
+  chunkReportOf({
+    status: "done", doneWhen: "met", specGaps: fields.specGaps ?? "", note: fields.note ?? "none",
+    launchReadiness: [], machineBlocked: [], ownerQuestion: "",
+  });
 
 const baseChunk: ParsedChunk = {
   number: 7,

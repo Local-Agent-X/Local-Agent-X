@@ -31,14 +31,9 @@ const script = vi.hoisted(() => ({
   edits: new Map<number, Edit[]>(),
   attempts: new Map<number, number>(),
   tasks: [] as Array<{ chunk: number; task: string }>,
-  breakerFindings: "FINDINGS: none",
   /** Chunks the skeptic breaks every time it looks: a contract with no edge. */
   skepticBreaks: new Set<number>(),
 }));
-
-const CLEAN = (changed: string) =>
-  `STATUS: done\nDONE_WHEN: met\nCHANGED: ${changed}\nTESTS: 1/1\nNEW_FAILURES: none\nPRE_EXISTING_FAILURES: none\n` +
-  `SPEC_GAPS: none\nLAUNCH_READINESS: none\nNOTE: done.`;
 
 // Only what the engine imports from the agent module, with no real module
 // behind it: loading the real one here let a caller reach its runner.
@@ -48,19 +43,22 @@ vi.mock("../src/auto-build/agents/chunk-runner.js", async () => {
   return {
     SKEPTIC_PROBE_DIR: ".skeptic",
     runChunkAgent: vi.fn(async (o: { role: string; title?: string; task: string; projectDir: string }) => {
-      const done = (stdout: string) => ({ stdout, exitCode: 0, durationMs: 1 });
+      // Each agent ends by calling its report tool; what it delivered comes
+      // back beside its (empty) last words.
+      const ran = { stdout: "", exitCode: 0, durationMs: 1 };
+      const reported = (note: string) => ({ ...ran, chunkReport: { status: "done" as const, doneWhen: "met" as const, note, specGaps: "", launchReadiness: [], machineBlocked: [], ownerQuestion: "" } });
       if (o.role === "chunk-skeptic") {
         const n = Number((o.title ?? "").match(/chunk (\d+)/i)?.[1]);
-        return done(script.skepticBreaks.has(n)
-          ? `VERDICT: BROKEN\nGROUND: spec/plan.md — "works"\nFINDING: another edge case of "works" (attempt ${script.attempts.get(n)}).\nFOLLOW_UPS: none`
-          : "VERDICT: HOLDS\nFINDING: ran the app's checks and probed the edges.\nFOLLOW_UPS: none");
+        return { ...ran, skepticVerdict: script.skepticBreaks.has(n)
+          ? { verdict: "broken" as const, ground: 'spec/plan.md — "works"', finding: `another edge case of "works" (attempt ${script.attempts.get(n)}).`, followUps: [] }
+          : { verdict: "holds" as const, ground: "", finding: "ran the app's checks and probed the edges.", followUps: [] } };
       }
-      if (o.role === "finish-breaker") return done(script.breakerFindings);
+      if (o.role === "finish-breaker") return { ...ran, breakerFindings: { findings: [] } };
       if (o.title === "Build preflight check") {
         const token = read(at(o.projectDir, ".lax-preflight-sentinel.txt"), "utf-8").trim();
         write(at(o.projectDir, ".lax-preflight-echo.txt"), token);
         copyFileSync(at(o.projectDir, ".lax-preflight-echo.txt"), at(o.projectDir, ".lax-preflight-bash.txt"));
-        return done(CLEAN(".lax-preflight-echo.txt").replace("NOTE: done.", `NOTE: preflight token ${token}`));
+        return reported(`preflight token ${token}`);
       }
       // A finish fix is titled by its place in its round (run-chunk-once.ts chunkLabel):
       // "Finish fix 1: hostile findings (1 of 4)" is chunk 1000 + 1 * 10 + 1.
@@ -72,7 +70,7 @@ vi.mock("../src/auto-build/agents/chunk-runner.js", async () => {
       script.tasks.push({ chunk, task: o.task });
       const edits = script.edits.get(chunk) ?? [];
       (edits[attempt - 1] ?? edits[edits.length - 1])?.(o.projectDir, script.port);
-      return done(CLEAN("index.html"));
+      return reported("done.");
     }),
   };
 });
@@ -162,7 +160,6 @@ beforeEach(async () => {
   script.edits = new Map([[1, [foundation]], [2, [addMeds]], [3, [checkScreen("No known flags")]]]);
   script.attempts = new Map();
   script.tasks = [];
-  script.breakerFindings = "FINDINGS: none";
   script.skepticBreaks = new Set();
   projectDir = join(mkdtempSync(join(tmpdir(), "lax-engine-e2e-")), `pillbox-${Math.random().toString(36).slice(2, 8)}`);
   mkdirSync(join(projectDir, "spec"), { recursive: true });
@@ -248,13 +245,13 @@ describe.skipIf(!chromiumAvailable)("the build engine, end to end", () => {
 
   it("what the break-it agents find is fixed by a fix chunk, judged like any other", async () => {
     let round = 0;
-    script.breakerFindings = "FINDINGS: none";
-    const { runChunkAgent } = await import("../src/auto-build/agents/chunk-runner.js");
+      const { runChunkAgent } = await import("../src/auto-build/agents/chunk-runner.js");
     const scripted = vi.mocked(runChunkAgent).getMockImplementation()!;
     vi.mocked(runChunkAgent).mockImplementation(async (o) => {
       if (o.role === "finish-breaker" && o.title?.includes("hostile")) {
         round++;
-        return { stdout: round === 1 ? "FINDINGS:\n- [high] the page has no footer saying it is not medical advice, index.html:1" : "FINDINGS: none", exitCode: 0, durationMs: 1 };
+        const findings = round === 1 ? [{ severity: "high" as const, text: "the page has no footer saying it is not medical advice, index.html:1" }] : [];
+        return { stdout: "", exitCode: 0, durationMs: 1, breakerFindings: { findings } };
       }
       return scripted(o);
     });

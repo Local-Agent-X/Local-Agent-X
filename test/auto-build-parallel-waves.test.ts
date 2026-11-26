@@ -114,18 +114,18 @@ vi.mock("../src/auto-build/loop/run-chunk-once.js", () => ({
 
 const { runBuildLoop } = await import("../src/auto-build/loop.js");
 const { parsePlanText } = await import("../src/auto-build/plan-parser.js");
-const { parseChunkReport } = await import("../src/auto-build/chunk-review/report-parser.js");
+const { chunkReportOf } = await import("../src/auto-build/chunk-review/chunk-report.js");
 
 function makeOutcome(action: string, changed: string[] = []) {
   // "pause": an accepted chunk that closes a phase with a verification gate.
   if (action === "pause") {
-    return { action: "halt", reasoning: "phase A gate", findings: [{ gate: "phase-gate", action: "halt", reasoning: "phase A gate" }], report: { ...parseChunkReport(""), changed } };
+    return { action: "halt", reasoning: "phase A gate", findings: [{ gate: "phase-gate", action: "halt", reasoning: "phase A gate" }], report: chunkReportOf(undefined, changed) };
   }
   return {
     action,
     reasoning: action === "halt" ? "chunk gate halted the build" : `chunk ${action}`,
     findings: action === "halt" ? [{ gate: "build-exec", action: "halt", reasoning: "halt" }] : [],
-    report: { ...parseChunkReport(""), changed },
+    report: chunkReportOf(undefined, changed),
   };
 }
 

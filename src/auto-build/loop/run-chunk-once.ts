@@ -3,11 +3,11 @@ import type { ParsedPlan, ParsedChunk } from "../plan-parser.js";
 import { buildChunkTask, chunkAgentRole, distillSharpenedContext } from "../skill-mapper.js";
 import { runChunkAgent } from "../agents/chunk-runner.js";
 import { runChunkReviewWithJudgment, type ChunkReviewOutcome } from "../chunk-review/index.js";
-import { parseChunkReport } from "../chunk-review/report-parser.js";
+import { chunkReportOf } from "../chunk-review/chunk-report.js";
 import type { ReviewAction } from "../chunk-review/gates.js";
 import type { JudgmentHook } from "../chunk-review/judgment-hook.js";
 import { chunkJudgingSummary, type ChunkJudge } from "../chunk-review/chunk-verdict.js";
-import { gitDiffPath } from "../git-helpers.js";
+import { chunkChangedFiles, gitDiffPath } from "../git-helpers.js";
 import type { EmitFn } from "./types.js";
 
 export interface RunChunkOnceOptions {
@@ -76,7 +76,7 @@ function workerTask(opts: RunChunkOnceOptions): string {
   if (opts.continueFrom) {
     return `The review sent your chunk back. ${opts.retryReason ?? ""}\n\n` +
       "Fix that in the same project, keep what you already fixed, run the checks the done-when names, and end " +
-      "with the same report block as before.";
+      "by calling chunk_report again: your earlier report is replaced by this one.";
   }
   const sharpenedContext = opts.priorOutcomes && opts.priorOutcomes.length > 0
     ? distillSharpenedContext(
@@ -97,6 +97,8 @@ interface ChunkExitInfo {
   exitCode: number;
   durationMs: number;
   error?: string;
+  /** The worker called chunk_report before its run ended. */
+  reported?: boolean;
 }
 
 /**
@@ -119,6 +121,9 @@ export function chunkProcessFailureOutcome(
   if (subResult.exitCode === 0) return null;
   const aborted = subResult.exitCode === 130 || signalAborted;
   const timedOut = subResult.exitCode === 124;
+  // It reported and its run was then marked failed (a guard on its last
+  // words): the work is there to be measured, so it is, not built again.
+  if (subResult.reported && !aborted && !timedOut) return null;
   const detail = subResult.error?.trim()
     || (timedOut ? "timed out" : "process exited without producing a report");
   const action: ReviewAction = aborted ? "halt" : "push_back";
@@ -128,8 +133,8 @@ export function chunkProcessFailureOutcome(
   return {
     action,
     reasoning,
-    findings: [{ gate: "report-shape", action, reasoning }],
-    report: parseChunkReport(""),
+    findings: [{ gate: "worker-run", action, reasoning }],
+    report: chunkReportOf(undefined),
   };
 }
 
@@ -173,7 +178,7 @@ export async function runChunkOnce(opts: RunChunkOnceOptions): Promise<ChunkRevi
   // RETRIED by the push_back machinery. Branch on the exit code first.
   const processFailure = chunkProcessFailureOutcome(
     opts.chunk.number,
-    subResult,
+    { ...subResult, reported: subResult.chunkReport !== undefined },
     opts.signal?.aborted === true,
   );
   if (processFailure) {
@@ -201,7 +206,8 @@ export async function runChunkOnce(opts: RunChunkOnceOptions): Promise<ChunkRevi
     chunk: opts.chunk,
     allChunks: opts.plan.chunks,
     plan: opts.plan,
-    rawReport: subResult.stdout,
+    report: subResult.chunkReport,
+    changed: await chunkChangedFiles(opts.projectDir, opts.preSha).catch(() => []),
     specDiff,
     projectDir: opts.projectDir,
     ledgerDir: opts.baseProjectDir ?? opts.projectDir,

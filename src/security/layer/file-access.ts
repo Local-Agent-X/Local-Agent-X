@@ -84,7 +84,7 @@ export { realpathDeep, canonicalAllowForms } from "../../workspace/paths.js";
 
 // A work-rooted session (auto-build chunk worker) owns its project's env
 // files: scaffolding <workRoot>/.env.local with placeholders is the sanctioned
-// missing-credentials recovery (chunk-review/missing-creds.ts), and the
+// missing-credentials recovery (chunk-review/gate-done-when.ts), and the
 // blanket .env deny forced workers to route around the gate (live 2026-07-02).
 // Deliberately tight: ONLY conventional env basenames (".env.key"/".env.pem"
 // stay blocked — they also match key/cert patterns and this must never widen

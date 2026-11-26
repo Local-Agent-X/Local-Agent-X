@@ -1,45 +1,37 @@
 /**
- * Five gate checks for a just-completed chunk. From the design memo's
- * "Gate machinery" section:
+ * The mechanical gates on a just-completed chunk, and the shapes every check
+ * shares (GateFinding, CheckResult).
  *
- *   1. Done-when verifier        — fuzzy match agent's report to plan's done-when
- *   2. Additive-diff check       — most important; spec edits must never weaken
- *   3. Phase-gate detector       — halt at end-of-phase verification gates
- *   4. Launch-readiness emitter  — surface deferred items, enforce concrete verify steps
- *   5. Test-failure escalation   — new failures halt, pre-existing don't
+ *   - Additive-diff check: spec edits must never weaken a constraint.
+ *   - Phase-gate detector: the chunk that closes a phase pauses at its gate.
+ *   - The worker's own word that it stopped (gate-done-when.ts).
  *
- * Each gate returns null (passed) or a GateFinding describing the action.
- * runReview (in index.ts) combines findings per the priority order:
- *   halt > push_back > amend_spec > proceed
+ * Each returns null (passed) or a GateFinding. runChunkReview (index.ts) takes
+ * the strongest: halt > push_back > amend_spec > proceed.
  *
- * Detection is mechanical where possible — the Bookwell fixtures show
- * that the high-signal failure shapes leave clear textual fingerprints:
- *   - "silently" / "silent fallback" → Constitution-violation gray area
- *   - "deferred to launch-readiness" in NOTE with DONE_WHEN: met for a
- *     chunk whose done-when names an integration test → silent deferral
- *   - "two options:" / "decide unilaterally" in NOTE → agent surfaced a
- *     choice that demands a human, not a proceed
- *
- * LLM judgment can layer on top (chunk-12 needs it — recognizing an
- * implicit-spec gap requires reading the constitution). For chunk 4's
- * scope, the mechanical gates catch chunks 6 and 10 deterministically;
- * chunk 12 is handled by a separate spec-gap check that the loop wires
- * when an external judgment hook is supplied.
+ * None of them reads prose a model wrote. Until 2026-11-26 four more did: a
+ * report-shape gate, a launch-readiness wording gate, a test-failures gate
+ * over the worker's own NEW_FAILURES line and a "two options" / "your call"
+ * phrase gate over its NOTE. Each held or set aside a chunk on how a sentence
+ * was put, and a gate that fired stopped the real checks from running at all.
+ * What those were for is measured now (the build and tests, the held-out
+ * scenarios, the skeptic) or stated in a typed field of the worker's report
+ * (agents/report-tools.ts): how to verify what could not be shown here, and a
+ * question only the owner can answer.
  */
 
 import type { ParsedChunk, ParsedPlan } from "../plan-parser.js";
-import type { ChunkReport } from "./report-parser.js";
 
 export type ReviewAction = "proceed" | "amend_spec" | "push_back" | "halt";
 
 export interface GateFinding {
   /** Which gate fired. Useful for logs + the user-facing halt message. */
   gate:
-    | "report-shape"
+    /** The worker's run itself failed: a crash, a timeout, a cancel. */
+    | "worker-run"
     | "done-when"
     | "additive-diff"
     | "phase-gate"
-    | "launch-readiness"
     | "spec-gap-judgment"
     | "build-exec"
     | "chunk-scenarios"
@@ -63,54 +55,6 @@ export type CheckResult =
   | { kind: "passed"; note?: string }
   | { kind: "failed"; finding: GateFinding }
   | { kind: "not-run"; why: string };
-
-/** Gate 0 (precondition): the report must parse to a known shape AND
- *  carry a recognized STATUS value.
- *
- *  push_back, not halt: a missing/malformed report is the classic
- *  weak-model dodge (live failure 2026-07-01: the worker did the chunk
- *  work but ended its run with no final report text, halting the whole
- *  build at 0/N). The loop's retry-once machinery respawns with the
- *  reason below; a second shape failure escalates to halt as always.
- *
- *  Two distinct shape failures, both retryable:
- *   1. No parseable block (STATUS/DONE_WHEN buckets absent) → `parsed` false.
- *   2. Block present but STATUS is an unrecognized token — the parser
- *      coerces "complete"/"success"/"blocked!" to `status: "unknown"`. That
- *      is NOT a known shape: paired with DONE_WHEN: met it would sail past
- *      every status-based gate and commit on a status nobody can reason
- *      about, and a mistyped "blocked!"/"partial." silently loses the
- *      blocked/partial recovery paths (missing-creds, spec-gap) that
- *      gateDoneWhen gates on status ∈ {blocked, partial}. Demand a canonical
- *      token; a fix round handles it, and the same miss again stops the rounds. */
-export function gateReportShape(report: ChunkReport): GateFinding | null {
-  if (!report.parsed) {
-    return {
-      gate: "report-shape",
-      action: "push_back",
-      reasoning:
-        "Your run ended without a parseable report. The LAST message of your run " +
-        "must be EXACTLY the report block — plain column-0 lines starting " +
-        "STATUS: / DONE_WHEN: / CHANGED: / TESTS: / NEW_FAILURES: / " +
-        "PRE_EXISTING_FAILURES: / SPEC_GAPS: / LAUNCH_READINESS: / NOTE: — no " +
-        "bold, no bullets, no code fence, no text after it. Verify what already " +
-        "landed on disk from the previous attempt before redoing work.",
-    };
-  }
-  if (report.status === "unknown") {
-    return {
-      gate: "report-shape",
-      action: "push_back",
-      reasoning:
-        "Your report's STATUS line is not a recognized value. STATUS must be " +
-        "EXACTLY one of `done`, `blocked`, or `partial` (lowercase, no trailing " +
-        "punctuation, no synonyms — \"complete\"/\"success\"/\"finished\" are NOT " +
-        "accepted). The rest of your report looks fine; re-emit the full report " +
-        "block with a valid STATUS token so the review gates can read it.",
-    };
-  }
-  return null;
-}
 
 // Gate 1 (done-when verifier) lives in gate-done-when.ts — the largest single
 // gate. Re-exported so callers keep one import.
@@ -240,97 +184,6 @@ export function gatePhaseGate(
       `Drive the gate's scenarios manually (browser/staging), score satisfaction, then resume with starting_chunk=${chunk.number + 1}. ` +
       `See plan.md "Phase verification gates" section for the scenario list.`,
   };
-}
-
-/**
- * Gate 4: Launch-readiness emitter.
- *
- * Doesn't halt by default — launch-readiness items are valid and expected.
- * But: any item must have a concrete "how to verify" step, not just
- * "test in staging." If LAUNCH_READINESS text is non-empty but lacks
- * concrete verb-phrases (set/run/assert/stand up/complete/verify) → the
- * worker sharpens it (push_back): it wrote the item, it can say how to check
- * it.
- */
-export function gateLaunchReadiness(report: ChunkReport): GateFinding | null {
-  const text = report.launchReadiness.trim();
-  if (!text) return null;
-
-  // Concrete verify steps contain at least one imperative verb phrase.
-  const concreteVerbRe = /\b(set|run|stand up|complete|assert|verify|deploy|configure|enable|register|provision|invoke)\b/i;
-  if (!concreteVerbRe.test(text)) {
-    return {
-      gate: "launch-readiness",
-      action: "push_back",
-      reasoning:
-        `LAUNCH_READINESS item lacks a concrete verify step. Each item must name how to verify it before launch ` +
-        `(e.g. "set X env, run Y test, assert Z"), not just "test in staging". ` +
-        `Got: "${truncate(text, 200)}"`,
-    };
-  }
-
-  // Concrete enough — not a halt, but the loop should append to
-  // LAUNCH_READINESS.md (chunk 7 wires that). We don't return a finding
-  // here because launch-readiness with concrete steps is "proceed."
-  return null;
-}
-
-/**
- * Optional gate: spec-gap judgment.
- *
- * Catches the chunk-10 (Constitution gray area) and chunk-12 (missing
- * implicit constraint) patterns. Looks at the NOTE body for:
- *
- *   - "Constitution #N" or "constitution" references → ambiguous case
- *   - "two options" / "decide unilaterally" / "surfaces the choice" →
- *     agent surfaced a fork; reviewer must halt for the user, not auto-decide
- *   - "silently" / "silent fallback" in NOTE without a fix in CHANGED →
- *     unresolved gray area
- *
- * The spec-gap judgment is intentionally separate from gateDoneWhen so
- * that the loop can pass it through an LLM if mechanical detection is
- * inconclusive. For chunks where the agent is explicit ("two options,
- * push back or accept"), mechanical detection suffices.
- */
-export function gateSpecGapJudgment(report: ChunkReport): GateFinding | null {
-  const note = report.note;
-  const noteLc = note.toLowerCase();
-
-  const forkPhrases = [
-    "two options",
-    "two paths",
-    "decide unilaterally",
-    "surfacing the choice",
-    "your call",
-    "user decides",
-  ];
-  for (const phrase of forkPhrases) {
-    if (noteLc.includes(phrase)) {
-      return {
-        gate: "spec-gap-judgment",
-        action: "halt",
-        reasoning:
-          `Agent's NOTE surfaces a fork ("${phrase}") — the choice between paths needs a human decision. ` +
-          `Halt; let the user pick.`,
-      };
-    }
-  }
-
-  // Constitution-violation language without a concrete resolution in the
-  // CHANGED set → halt. We don't claim to LLM-classify the violation;
-  // we just refuse to barrel past Constitution-tagged unresolved
-  // ambiguity. Conservative on purpose.
-  if (/constitution\s*#?\s*\d+/i.test(note) && /\b(silent|gray area|theoretical|fallback|concern)\b/i.test(noteLc)) {
-    return {
-      gate: "spec-gap-judgment",
-      action: "halt",
-      reasoning:
-        `NOTE references a Constitution rule + leaves it as a gray area / silent-fallback / theoretical concern. ` +
-        `Constitution-tagged ambiguity must be resolved (fix code or amend spec) before proceeding.`,
-    };
-  }
-
-  return null;
 }
 
 function truncate(s: string, n: number): string {

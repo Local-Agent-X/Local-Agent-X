@@ -23,7 +23,7 @@ import { composeGitArgs, HARNESS_COMMIT_IDENTITY, isNoGitIdentity } from "../git
 import { awaitSandboxProof, getSandboxMode } from "../sandbox/index.js";
 import { runCaged, type CagedRunOutcome } from "../tools/caged-spawn.js";
 import { gitArgv } from "../tools/program-argv.js";
-import { ENGINE_STATE_PATTERNS } from "./engine-state-files.js";
+import { ENGINE_STATE_PATTERNS, isEngineStateEntry } from "./engine-state-files.js";
 
 export interface GitRunOptions {
   cwd: string;
@@ -224,6 +224,22 @@ export async function gitDiffPath(cwd: string, sinceSha: string, pathSpec: strin
   const r = await gitRun(["diff", "--no-color", "--no-ext-diff", "--no-textconv", sinceSha, "--", pathSpec], { cwd });
   if (r.exitCode !== 0) throw new Error(gitFailText("git diff", r));
   return r.stdout;
+}
+
+/**
+ * The files a chunk changed since `sinceSha`: committed, uncommitted and new,
+ * without the engine's own files (engine-state-files.ts). Read from git, never
+ * from the worker's account of it: a worker's own list was the only source
+ * until 2026-11-26, and nothing checked it. Empty when git cannot say.
+ */
+export async function chunkChangedFiles(cwd: string, sinceSha: string): Promise<string[]> {
+  // --no-renames: a file moved (or deleted beside a new one with the same
+  // content) is listed under both paths, not folded into the new one.
+  const changed = await gitRun(["diff", "--name-only", "--no-renames", "-z", sinceSha], { cwd });
+  const fresh = await gitRun(["ls-files", "--others", "--exclude-standard", "-z"], { cwd });
+  if (changed.exitCode !== 0 || fresh.exitCode !== 0) return [];
+  const engines = (file: string) => file.split("/").some((part, i, all) => isEngineStateEntry(part, i < all.length - 1));
+  return [...new Set([...changed.stdout.split("\0"), ...fresh.stdout.split("\0")].filter(Boolean))].filter((f) => !engines(f)).sort();
 }
 
 export async function gitStatusPorcelain(cwd: string): Promise<string> {

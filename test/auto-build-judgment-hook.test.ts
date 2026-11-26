@@ -19,7 +19,7 @@ import {
   type LlmCall,
 } from "../src/auto-build/chunk-review/judgment-hook.js";
 import type { ParsedChunk } from "../src/auto-build/plan-parser.js";
-import { parseChunkReport } from "../src/auto-build/chunk-review/report-parser.js";
+import { chunkReportOf } from "../src/auto-build/chunk-review/chunk-report.js";
 
 let dir: string;
 
@@ -35,17 +35,12 @@ const sampleChunk: ParsedChunk = {
   rawSection: "",
 };
 
-const sampleReport = parseChunkReport(
-  "STATUS: done\n" +
-  "DONE_WHEN: met\n" +
-  "CHANGED: app/page.tsx, lib/render.ts\n" +
-  "TESTS: 18/18\n" +
-  "NEW_FAILURES: none\n" +
-  "PRE_EXISTING_FAILURES: none\n" +
-  "SPEC_GAPS: none\n" +
-  "LAUNCH_READINESS: none\n" +
-  "NOTE: page renders, no issues."
-);
+/** What a worker that finished delivers with chunk_report. */
+const doneCall = (note: string) => ({
+  status: "done" as const, doneWhen: "met" as const, note, specGaps: "", launchReadiness: [], machineBlocked: [], ownerQuestion: "",
+});
+
+const sampleReport = chunkReportOf(doneCall("page renders, no issues."), ["app/page.tsx", "lib/render.ts"]);
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "auto-build-judgment-test-"));
@@ -114,10 +109,7 @@ describe("createLlmJudgmentHook — happy paths", () => {
   it("returns null when CHANGED is empty (short-circuit, no LLM call)", async () => {
     const llmCall = vi.fn(async () => "should not be called");
     const hook = createLlmJudgmentHook(llmCall as LlmCall);
-    const emptyReport = parseChunkReport(
-      "STATUS: done\nDONE_WHEN: met\nCHANGED: none\nTESTS: 0/0\nNEW_FAILURES: none\n" +
-      "PRE_EXISTING_FAILURES: none\nSPEC_GAPS: none\nLAUNCH_READINESS: none\nNOTE: nothing changed."
-    );
+    const emptyReport = chunkReportOf(doneCall("nothing changed."), []);
     const result = await hook({ chunk: sampleChunk, report: emptyReport, projectDir: dir });
     expect(result).toBeNull();
     expect(llmCall).not.toHaveBeenCalled();
@@ -163,10 +155,7 @@ describe("createLlmJudgmentHook — fail-open paths", () => {
     mkdirSync(join(dir, "src"));
     writeFileSync(join(dir, "src", "ok.ts"), "// fine code");
 
-    const cleanReport = parseChunkReport(
-      "STATUS: done\nDONE_WHEN: met\nCHANGED: src/ok.ts\nTESTS: 5/5\nNEW_FAILURES: none\n" +
-      "PRE_EXISTING_FAILURES: none\nSPEC_GAPS: none\nLAUNCH_READINESS: none\nNOTE: ok"
-    );
+    const cleanReport = chunkReportOf(doneCall("ok"), ["src/ok.ts"]);
     const llmCall: LlmCall = async () => '{"violation": false, "rule": "", "pattern": "", "specGap": "", "reasoning": "no issues"}';
     const hook = createLlmJudgmentHook(llmCall);
     expect(await hook({ chunk: sampleChunk, report: cleanReport, projectDir: dir })).toBeNull();
@@ -177,10 +166,7 @@ describe("createLlmJudgmentHook — fail-open paths", () => {
     writeFileSync(join(dir, "src", "ok.ts"), "ok");
     const llmCall: LlmCall = async () => { throw new Error("network down"); };
     const hook = createLlmJudgmentHook(llmCall);
-    const reportWithFile = parseChunkReport(
-      "STATUS: done\nDONE_WHEN: met\nCHANGED: src/ok.ts\nTESTS: 5/5\nNEW_FAILURES: none\n" +
-      "PRE_EXISTING_FAILURES: none\nSPEC_GAPS: none\nLAUNCH_READINESS: none\nNOTE: ok"
-    );
+    const reportWithFile = chunkReportOf(doneCall("ok"), ["src/ok.ts"]);
     expect(await hook({ chunk: sampleChunk, report: reportWithFile, projectDir: dir })).toBeNull();
   });
 
@@ -189,10 +175,7 @@ describe("createLlmJudgmentHook — fail-open paths", () => {
     writeFileSync(join(dir, "src", "ok.ts"), "ok");
     const llmCall: LlmCall = async () => "I'm sorry, I can't comply with that request.";
     const hook = createLlmJudgmentHook(llmCall);
-    const reportWithFile = parseChunkReport(
-      "STATUS: done\nDONE_WHEN: met\nCHANGED: src/ok.ts\nTESTS: 5/5\nNEW_FAILURES: none\n" +
-      "PRE_EXISTING_FAILURES: none\nSPEC_GAPS: none\nLAUNCH_READINESS: none\nNOTE: ok"
-    );
+    const reportWithFile = chunkReportOf(doneCall("ok"), ["src/ok.ts"]);
     expect(await hook({ chunk: sampleChunk, report: reportWithFile, projectDir: dir })).toBeNull();
   });
 });

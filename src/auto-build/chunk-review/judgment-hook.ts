@@ -25,7 +25,7 @@ import { join, isAbsolute, resolve } from "node:path";
 import { z } from "zod";
 import { classifySchema } from "../../classifiers/schema-output.js";
 import type { ParsedChunk } from "../plan-parser.js";
-import type { ChunkReport } from "./report-parser.js";
+import type { ChunkReport } from "./chunk-report.js";
 
 const MAX_CONSTITUTION_CHARS = 6000;
 const MAX_CHANGED_FILES = 12;

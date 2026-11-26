@@ -21,11 +21,13 @@ import { execSync } from "node:child_process";
 
 // Hoisted mock for the subprocess module so the loop's spawn calls hit
 // the queue we control per-test instead of executing real Claude Code.
+type WorkerReport = import("../src/auto-build/agents/agent-report.js").ChunkReportCall;
 const { __queue, __pushReport } = vi.hoisted(() => {
-  const q: string[] = [];
+  const q: WorkerReport[] = [];
   return {
     __queue: q,
-    __pushReport(report: string) { q.push(report); },
+    /** What the next worker delivers with chunk_report. */
+    __pushReport(report: WorkerReport) { q.push(report); },
   };
 });
 
@@ -39,7 +41,9 @@ function __setProjectDirForMock(dir: string) { __projectDirForMock = dir; __call
 
 vi.mock("../src/auto-build/agents/chunk-runner.js", () => ({
   runChunkAgent: vi.fn(async () => {
-    const next = __queue.shift() || "STATUS: unknown\nDONE_WHEN: unknown\nCHANGED: none\nTESTS: n/a\nNEW_FAILURES: none\nPRE_EXISTING_FAILURES: none\nSPEC_GAPS: none\nLAUNCH_READINESS: none\nNOTE: queue empty";
+    // A worker the test did not queue stops blocked, so a spawn nobody
+    // expected never lands a chunk by accident.
+    const next: WorkerReport = __queue.shift() ?? { status: "blocked", doneWhen: "unmet", note: "queue empty", specGaps: "", launchReadiness: [], machineBlocked: [], ownerQuestion: "" };
     if (__projectDirForMock && __writeAgentChanges) {
       const { writeFileSync, mkdirSync } = await import("node:fs");
       const { join } = await import("node:path");
@@ -50,9 +54,10 @@ vi.mock("../src/auto-build/agents/chunk-runner.js", () => ({
       } catch { /* test may have already cleaned up */ }
     }
     return {
-      stdout: next,
+      stdout: "",
       exitCode: 0,
       durationMs: 50,
+      chunkReport: next,
     };
   }),
 }));
@@ -86,17 +91,19 @@ const TWO_CHUNK_PLAN = [
   "- **Done when:** feature works.",
 ].join("\n");
 
-const CLEAN_REPORT = (changedFile: string) =>
-  `STATUS: done\nDONE_WHEN: met\nCHANGED: ${changedFile}\nTESTS: 1/1\nNEW_FAILURES: none\nPRE_EXISTING_FAILURES: none\nSPEC_GAPS: none\nLAUNCH_READINESS: none\nNOTE: clean.`;
+const report = (over: Partial<WorkerReport> = {}): WorkerReport => ({
+  status: "done", doneWhen: "met", note: "clean.", specGaps: "", launchReadiness: [], machineBlocked: [], ownerQuestion: "", ...over,
+});
 
-const HALT_REPORT_BLOCKED =
-  `STATUS: blocked\nDONE_WHEN: unmet\nCHANGED: none\nTESTS: n/a\nNEW_FAILURES: none\nPRE_EXISTING_FAILURES: none\nSPEC_GAPS: none\nLAUNCH_READINESS: none\nNOTE: needs creds.`;
+const CLEAN_REPORT = (built: string) => report({ note: `clean: ${built}` });
 
-const AMEND_REPORT = (gapsText: string) =>
-  `STATUS: done\nDONE_WHEN: met\nCHANGED: src/feature.ts\nTESTS: 3/3\nNEW_FAILURES: none\nPRE_EXISTING_FAILURES: none\nSPEC_GAPS: ${gapsText}\nLAUNCH_READINESS: none\nNOTE: clean. Spec was missing a constraint.`;
+const HALT_REPORT_BLOCKED = report({ status: "blocked", doneWhen: "unmet", note: "needs creds." });
 
-const LAUNCH_READINESS_REPORT =
-  `STATUS: done\nDONE_WHEN: met\nCHANGED: src/feature.ts\nTESTS: 2/2\nNEW_FAILURES: none\nPRE_EXISTING_FAILURES: none\nSPEC_GAPS: none\nLAUNCH_READINESS: Apple Sign In e2e — set APPLE_* envs, run real OAuth round-trip, assert session cookie issued.\nNOTE: clean.`;
+const AMEND_REPORT = (gapsText: string) => report({ specGaps: gapsText, note: "clean. Spec was missing a constraint." });
+
+const LAUNCH_READINESS_REPORT = report({
+  launchReadiness: [{ what: "Apple Sign In e2e", howToVerify: "set APPLE_* envs, run real OAuth round-trip, assert session cookie issued." }],
+});
 
 let projectDir: string;
 
@@ -458,7 +465,7 @@ describe("runBuildLoop — event stream", () => {
   });
 
   it("lands a chunk once after a push-back retry succeeds", async () => {
-    __pushReport("not a chunk report");
+    __pushReport(report({ status: "partial", doneWhen: "unmet", note: "the test run is half written" }));
     __pushReport(CLEAN_REPORT("src/skeleton.ts"));
     const plan = parsePlanText(TWO_CHUNK_PLAN);
     const result = await runBuildLoop({

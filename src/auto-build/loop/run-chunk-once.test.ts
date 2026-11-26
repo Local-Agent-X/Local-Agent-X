@@ -1,18 +1,16 @@
-// Regression for the chunk-agent process-failure decision (theme-5 finding:
-// "auto-build never inspects a chunk agent's exit code"). A killed / timed-out
-// / aborted agent produces empty stdout; the old code fed that straight to the
-// report parser, mislabeling it "no parseable report" and — worse — RETRYING a
-// user-cancelled build. chunkProcessFailureOutcome branches on the exit code so
-// a cancel halts (no respawn) and a crash/timeout push_backs with an honest
-// reason.
+// What a worker's run that did not end cleanly counts as. A cancel halts (the
+// build is never respawned behind a user's cancel), a crash or timeout goes
+// back with the exit code and the error in the reason, and a worker that had
+// already reported is reviewed on its work instead of being built again.
 
 import { describe, it, expect } from "vitest";
 import { chunkProcessFailureOutcome } from "./run-chunk-once.js";
 
-const res = (exitCode: number, extra: { error?: string; durationMs?: number } = {}) => ({
+const res = (exitCode: number, extra: { error?: string; durationMs?: number; reported?: boolean } = {}) => ({
   exitCode,
   durationMs: extra.durationMs ?? 1234,
   error: extra.error,
+  reported: extra.reported,
 });
 
 describe("chunkProcessFailureOutcome", () => {
@@ -20,16 +18,27 @@ describe("chunkProcessFailureOutcome", () => {
     expect(chunkProcessFailureOutcome(3, res(0), false)).toBeNull();
   });
 
-  it("crash (exit 1) → push_back with an honest, exit-code-bearing reason (not 'no parseable report')", () => {
+  it("crash (exit 1) → push_back with an honest, exit-code-bearing reason", () => {
     const o = chunkProcessFailureOutcome(2, res(1, { error: "agent threw" }), false)!;
     expect(o.action).toBe("push_back");
     expect(o.reasoning).toContain("exit 1");
     expect(o.reasoning).toContain("agent threw");
-    expect(o.reasoning).not.toMatch(/no parseable report/i);
-    // Empty (unparsed) report so downstream gates never read stale fields.
-    expect(o.report.parsed).toBe(false);
+    // No report, so nothing downstream reads a status the worker never gave.
+    expect(o.report).toMatchObject({ reported: false, status: "unknown" });
     expect(o.findings).toHaveLength(1);
-    expect(o.findings[0]).toMatchObject({ gate: "report-shape", action: "push_back" });
+    expect(o.findings[0]).toMatchObject({ gate: "worker-run", action: "push_back" });
+  });
+
+  // A guard on a worker's last words can mark its run failed after it reported;
+  // building the chunk again would throw away work that is there to measure.
+  it("a worker that reported before its run was marked failed is reviewed, not respawned", () => {
+    expect(chunkProcessFailureOutcome(2, res(1, { error: "ended on a promise", reported: true }), false)).toBeNull();
+  });
+
+  it("a report does not excuse a timeout or a cancel: the work may be half written", () => {
+    expect(chunkProcessFailureOutcome(2, res(124, { reported: true }), false)!.action).toBe("push_back");
+    expect(chunkProcessFailureOutcome(2, res(130, { reported: true }), false)!.action).toBe("halt");
+    expect(chunkProcessFailureOutcome(2, res(1, { reported: true }), true)!.action).toBe("halt");
   });
 
   it("timeout (exit 124) → push_back and names the timeout", () => {

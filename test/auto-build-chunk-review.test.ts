@@ -1,25 +1,13 @@
 /**
- * /chunk-review fixture tests.
+ * The chunk review's own checks.
  *
- * Runs the gate logic against the four fixture chunks in
- * test/fixtures/auto-build-chunk-review/. Each fixture has an expectedAction
- * that the review pass MUST produce. These were lifted from the
- * Bookwell build's real review-pass turns where manual review
- * caught the issue — they encode the discipline the skill is supposed
- * to enforce.
- *
- * Note on chunk-12: the fixture expects amend_spec, but the mechanical
- * gate alone classifies it as proceed (the agent reports SPEC_GAPS: none,
- * no Constitution mention, no fork phrase). Catching chunk-12
- * mechanically requires an external LLM judgment hook that reads the
- * chunk's CHANGED files against the constitution. The test asserts the
- * mechanical-only verdict (proceed) AND that supplying a synthesized
- * spec-gap surfaces it correctly. Closing the chunk-12 gap fully is a
- * follow-up — wire an LLM hook when one's available.
+ * What the worker's typed report can decide (only that it stopped, by its own
+ * typed word), what it cannot (anything about how a note is worded), the spec
+ * diff and phase gates, and the build check that runs after them and outranks
+ * whatever the report says.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { rm } from "node:fs/promises";
@@ -54,48 +42,23 @@ import type { BuildExecRunner } from "../src/auto-build/chunk-review/gate-build-
 import { discoverCommands, findStaticEntry, runBuildExecGate } from "../src/auto-build/chunk-review/gate-build-exec.js";
 import { structureCheckCommand } from "../src/app-scaffold/project-kit.js";
 import { SANDBOX_PROOF_PENDING_RETRY } from "../src/sandbox/index.js";
-import { parseChunkReport } from "../src/auto-build/chunk-review/report-parser.js";
-import {
-  gateReportShape,
-  gateDoneWhen,
-  gateAdditiveDiff,
-  gateLaunchReadiness,
-  gatePhaseGate,
-  gateSpecGapJudgment,
-  classifyDiff,
-} from "../src/auto-build/chunk-review/gates.js";
+import { chunkReportOf, renderChunkReport } from "../src/auto-build/chunk-review/chunk-report.js";
+import { gateDoneWhen } from "../src/auto-build/chunk-review/gate-done-when.js";
+import { gateAdditiveDiff, gatePhaseGate, classifyDiff } from "../src/auto-build/chunk-review/gates.js";
+import type { ChunkReportCall } from "../src/auto-build/agents/agent-report.js";
 import type { ParsedChunk, ParsedPlan } from "../src/auto-build/plan-parser.js";
 
-const FIXTURE_DIR = join(__dirname, "fixtures", "auto-build-chunk-review");
-
-interface Fixture {
-  _comment: string;
-  chunkNumber: number;
-  chunkTitle: string;
-  doneWhen: string;
-  agentReport: string;
-  expectedAction: "proceed" | "amend_spec" | "push_back" | "halt";
-  expectedReasonContains: string;
-  specDiff: { filePath: string; additions: string; removalsWithJustification: string[] } | null;
-}
-
-function loadFixture(name: string): Fixture {
-  return JSON.parse(readFileSync(join(FIXTURE_DIR, name), "utf-8"));
-}
-
-function chunkFromFixture(f: Fixture): ParsedChunk {
-  return {
-    number: f.chunkNumber,
-    title: f.chunkTitle,
-    phase: "Phase X — Test",
-    klass: "trunk",
-    slice: "(synthetic — derived from fixture)",
-    dependsOn: [],
-    scenarios: "—",
-    doneWhen: f.doneWhen,
-    rawSection: "",
-  };
-}
+const CHUNK: ParsedChunk = {
+  number: 12,
+  title: "Public booking page UI",
+  phase: "Phase X — Test",
+  klass: "trunk",
+  slice: "the booking page",
+  dependsOn: [],
+  scenarios: "—",
+  doneWhen: "integration test against the booking page returns 200 and hides conflicting slots.",
+  rawSection: "",
+};
 
 function emptyPlan(chunk: ParsedChunk): ParsedPlan {
   return {
@@ -106,234 +69,230 @@ function emptyPlan(chunk: ParsedChunk): ParsedPlan {
   };
 }
 
-describe("report parser", () => {
-  it("parses a full structured report into fields", () => {
-    const f = loadFixture("chunk-clean-proceed.json");
-    const r = parseChunkReport(f.agentReport);
-    expect(r.parsed).toBe(true);
-    expect(r.status).toBe("done");
-    expect(r.doneWhen).toBe("met");
-    expect(r.testsPass).toBe(12);
-    expect(r.testsTotal).toBe(12);
-    expect(r.changed).toContain("lib/calendar/adapter.ts");
-    expect(r.specGaps).toBe("");
-    expect(r.launchReadiness).toBe("");
+/** What a worker that finished delivers with chunk_report. */
+const done = (over: Partial<ChunkReportCall> = {}): ChunkReportCall => ({
+  status: "done", doneWhen: "met", note: "Booking page renders; 18/18 tests pass.", specGaps: "",
+  launchReadiness: [], machineBlocked: [], ownerQuestion: "", ...over,
+});
+const stopped = (over: Partial<ChunkReportCall> = {}): ChunkReportCall => done({ status: "blocked", doneWhen: "unmet", ...over });
+
+const review = (report?: ChunkReportCall, changed?: string[]) =>
+  runChunkReview({ chunk: CHUNK, allChunks: [CHUNK], plan: emptyPlan(CHUNK), report, changed });
+
+const reviewWork = (report: ChunkReportCall | undefined, hook?: JudgmentHook, exec: BuildExecRunner = async () => null) =>
+  runChunkReviewWithJudgment(
+    { chunk: CHUNK, allChunks: [CHUNK], plan: emptyPlan(CHUNK), report, projectDir: "/tmp/unused-by-stub" },
+    hook, undefined, exec,
+  );
+
+describe("chunkReportOf: the review's reading of what the worker delivered", () => {
+  it("carries the typed fields, and each launch-readiness item with how to verify it", () => {
+    const r = chunkReportOf(done({
+      doneWhen: "deferred",
+      specGaps: "the spec names no slot length",
+      launchReadiness: [{ what: "Apple Sign In end to end", howToVerify: "set APPLE_* envs, run the OAuth round trip, assert a session cookie" }],
+      ownerQuestion: "modal or page for the detail view?",
+    }), ["src/page.tsx"]);
+    expect(r).toMatchObject({
+      reported: true, status: "done", doneWhen: "deferred-to-launch-readiness",
+      specGaps: "the spec names no slot length", ownerQuestion: "modal or page for the detail view?",
+      launchReadiness: "Apple Sign In end to end: set APPLE_* envs, run the OAuth round trip, assert a session cookie",
+    });
   });
 
-  it("marks parsed:false on a malformed report", () => {
-    const r = parseChunkReport("just some prose with no fields");
-    expect(r.parsed).toBe(false);
-    expect(r.status).toBe("unknown");
+  // The files a chunk changed are read from git, never taken from the worker.
+  it("takes the changed files it is given, whatever the worker said or did not say", () => {
+    expect(chunkReportOf(done(), ["src/a.ts", "src/b.ts"]).changed).toEqual(["src/a.ts", "src/b.ts"]);
+    expect(chunkReportOf(undefined, ["src/a.ts"]).changed).toEqual(["src/a.ts"]);
   });
 
-  it("captures multi-line NOTE bodies verbatim", () => {
-    const f = loadFixture("chunk-10-silent-fallback.json");
-    const r = parseChunkReport(f.agentReport);
-    expect(r.note).toContain("Constitution #8 concern");
-    expect(r.note.toLowerCase()).toContain("two options");
+  it("a worker that reported nothing reads as unknown, not as done and not as failed", () => {
+    expect(chunkReportOf(undefined)).toEqual({
+      reported: false, status: "unknown", doneWhen: "unknown", changed: [], specGaps: "", launchReadiness: "",
+      note: "", machineBlocked: [], ownerQuestion: "",
+    });
+  });
+
+  it("renders the report in labelled lines for whoever judges it, leaving out what is empty", () => {
+    expect(renderChunkReport(chunkReportOf(undefined))).toBe("(the worker made no report)");
+    expect(renderChunkReport(chunkReportOf(done()))).toBe("Status: done; done-when: met\nNote: Booking page renders; 18/18 tests pass.");
+    const full = renderChunkReport(chunkReportOf(stopped({
+      specGaps: "no slot length", machineBlocked: [{ check: "npm run check:kotlin", reason: "blocked by Application Control" }],
+      ownerQuestion: "modal or page?",
+    })));
+    expect(full).toContain("Spec gaps: no slot length");
+    expect(full).toContain("This machine refused: `npm run check:kotlin` (blocked by Application Control)");
+    expect(full).toContain("Question for the owner: modal or page?");
   });
 });
 
-// Regression (2026-07-01 food-truck-tracker chunk 1): the worker did the
-// chunk work but ended its run with no parseable report, and the old halt
-// killed the build at 0/7. A shape failure must be a push_back (retry once
-// with explicit format feedback) and must short-circuit the other gates —
-// they would fire spuriously on the empty fields and outrank the retry.
-describe("malformed report -> push_back retry, not halt", () => {
-  it("returns push_back with only the report-shape finding", () => {
-    const f = loadFixture("chunk-clean-proceed.json");
-    const chunk = chunkFromFixture(f);
-    const outcome = runChunkReview({
-      chunk,
-      allChunks: [chunk],
-      plan: emptyPlan(chunk),
-      rawReport: "Wrote app/layout.tsx\n\nTask 123 updated - status: completed",
-    });
-    expect(outcome.action).toBe("push_back");
-    expect(outcome.findings).toHaveLength(1);
-    expect(outcome.findings[0].gate).toBe("report-shape");
-    expect(outcome.reasoning).toContain("STATUS:");
-  });
-});
-// Regression: gateReportShape validated STRUCTURE (STATUS + DONE_WHEN buckets
-// present → parsed=true) but not the STATUS VALUE. A worker writing a plausible
-// synonym — "STATUS: complete" / "success" — coerced to status="unknown" yet
-// parsed=true, sailing past the shape gate; paired with "DONE_WHEN: met" it also
-// cleared gateDoneWhen (which only halts on blocked/partial) → the chunk
-// committed to main on a status nobody can reason about. A mistyped
-// "STATUS: blocked!" was worse: status="unknown" silently dropped the
-// blocked/partial recovery paths. An unrecognized STATUS token is a shape
-// failure → push_back retry, same as a missing report.
-describe("unrecognized STATUS token -> push_back retry, not silent proceed", () => {
-  it("gateReportShape fires push_back when a parseable report has status=unknown", () => {
-    const r = parseChunkReport(
-      "STATUS: complete\nDONE_WHEN: met\nCHANGED: x.ts\nTESTS: 5/5\n" +
-      "NEW_FAILURES: none\nPRE_EXISTING_FAILURES: none\nSPEC_GAPS: none\n" +
-      "LAUNCH_READINESS: none\nNOTE: shipped it"
-    );
-    expect(r.parsed).toBe(true);      // structure is fine…
-    expect(r.status).toBe("unknown"); // …but the STATUS token is not recognized
-    const finding = gateReportShape(r)!;
-    expect(finding.action).toBe("push_back");
-    expect(finding.gate).toBe("report-shape");
-    expect(finding.reasoning).toMatch(/done.*blocked.*partial/i);
-  });
-
-  it("still passes a valid STATUS: done", () => {
-    const r = parseChunkReport(
-      "STATUS: done\nDONE_WHEN: met\nCHANGED: x.ts\nTESTS: 5/5\n" +
-      "NEW_FAILURES: none\nPRE_EXISTING_FAILURES: none\nSPEC_GAPS: none\n" +
-      "LAUNCH_READINESS: none\nNOTE: ok"
-    );
-    expect(gateReportShape(r)).toBeNull();
-  });
-
-  it("end-to-end: a 'STATUS: complete, DONE_WHEN: met' report does NOT proceed", () => {
-    const f = loadFixture("chunk-clean-proceed.json");
-    const chunk = chunkFromFixture(f);
-    const outcome = runChunkReview({
-      chunk,
-      allChunks: [chunk],
-      plan: emptyPlan(chunk),
-      rawReport:
-        "STATUS: complete\nDONE_WHEN: met\nCHANGED: x.ts\nTESTS: 5/5\n" +
-        "NEW_FAILURES: none\nPRE_EXISTING_FAILURES: none\nSPEC_GAPS: none\n" +
-        "LAUNCH_READINESS: none\nNOTE: all good",
-    });
-    expect(outcome.action).toBe("push_back"); // was silently "proceed" before the fix
-    expect(outcome.findings).toHaveLength(1);
-    expect(outcome.findings[0].gate).toBe("report-shape");
-  });
-});
-
-describe("Bookwell fixture: chunk-clean-proceed → proceed", () => {
-  it("returns proceed when all gates pass", () => {
-    const f = loadFixture("chunk-clean-proceed.json");
-    const chunk = chunkFromFixture(f);
-    const outcome = runChunkReview({
-      chunk,
-      allChunks: [chunk],
-      plan: emptyPlan(chunk),
-      rawReport: f.agentReport,
-    });
+// A missing or badly shaped report used to be the first gate, and a worker was
+// respawned to rewrite it. Its work is there to be measured either way.
+describe("a worker that made no report", () => {
+  it("is not sent back for it", () => {
+    const outcome = review(undefined, ["src/page.tsx"]);
     expect(outcome.action).toBe("proceed");
     expect(outcome.findings).toEqual([]);
+    expect(outcome.report.reported).toBe(false);
+  });
+
+  it("goes straight to the measured checks: the build check runs on its work and decides", async () => {
+    const ran = vi.fn<BuildExecRunner>(async () => null);
+    expect((await reviewWork(undefined, undefined, ran)).action).toBe("proceed");
+    expect(ran).toHaveBeenCalledTimes(1);
+    const failing: BuildExecRunner = async () => ({ gate: "build-exec", action: "halt", reasoning: "`npm test` exited 1" });
+    expect((await reviewWork(undefined, undefined, failing)).action).toBe("halt");
   });
 });
 
-describe("Bookwell fixture: chunk-6 silent deferral → back to the worker", () => {
-  it("sends the chunk back when DONE_WHEN: met but NOTE says 'launch-readiness deferred'", () => {
-    const f = loadFixture("chunk-06-silent-deferral.json");
-    const chunk = chunkFromFixture(f);
-    const outcome = runChunkReview({
-      chunk,
-      allChunks: [chunk],
-      plan: emptyPlan(chunk),
-      rawReport: f.agentReport,
-    });
-    expect(outcome.action).toBe("push_back");
-    expect(outcome.reasoning.toLowerCase()).toMatch(/deferr|integration test|silent/);
-    const fired = outcome.findings.find(g => g.gate === "done-when");
-    expect(fired).toBeDefined();
-  });
-});
-
-describe("Bookwell fixture: chunk-10 constitution gray area → halt", () => {
-  it("halts when NOTE surfaces a 'two options' fork", () => {
-    const f = loadFixture("chunk-10-silent-fallback.json");
-    const chunk = chunkFromFixture(f);
-    const outcome = runChunkReview({
-      chunk,
-      allChunks: [chunk],
-      plan: emptyPlan(chunk),
-      rawReport: f.agentReport,
-    });
-    expect(outcome.action).toBe("halt");
-    const fired = outcome.findings.find(g => g.gate === "spec-gap-judgment");
-    expect(fired).toBeDefined();
-    expect(fired!.reasoning.toLowerCase()).toMatch(/two options|fork/);
-  });
-});
-
-describe("Bookwell fixture: chunk-12 stale-data gap → mechanical proceed, amend_spec with LLM hook", () => {
-  it("mechanical-only verdict is proceed (no fork phrase, no Constitution ref in NOTE)", () => {
-    const f = loadFixture("chunk-12-stale-data-gap.json");
-    const chunk = chunkFromFixture(f);
-    const outcome = runChunkReview({
-      chunk,
-      allChunks: [chunk],
-      plan: emptyPlan(chunk),
-      rawReport: f.agentReport,
-    });
+// Each of these sentences once held a chunk or halted a build on a regex over
+// the worker's note: a deferral phrase beside "met", a "two options" fork, a
+// Constitution reference beside "fallback", the word "credentials", a
+// launch-readiness item that read as vague. A note is a claim; the skeptic and
+// the held-out scenarios judge whether the done-when is met.
+describe("how a report is worded decides nothing", () => {
+  it.each([
+    "Token mirror implemented. Integration test not run; launch-readiness deferred.",
+    "Shipped, but two options for the edge case: A or B, your call.",
+    "Shipped. Constitution #8 concern: there is a silent fallback to defaults.",
+    "Build fails solely on missing Supabase credentials (runtime infra, not code).",
+    "none observed",
+    "I skipped the e2e run and was not able to run the device test.",
+  ])("a finished worker whose note says %j is not held or halted for the words", (note) => {
+    const outcome = review(done({ note }));
     expect(outcome.action).toBe("proceed");
+    expect(outcome.findings).toEqual([]);
+    expect(outcome.report.note).toBe(note);
   });
 
-  it("classifies as amend_spec when an LLM judgment hook flags the implicit violation", async () => {
-    const f = loadFixture("chunk-12-stale-data-gap.json");
-    const chunk = chunkFromFixture(f);
-    const mockHook: JudgmentHook = async () => ({
-      specGap: f.specDiff?.additions || "Stale-data warning required on degraded connections.",
-      reasoning: "Constitution #8 — no silent failures; booking page renders availability without notice on degraded connections.",
-    });
-    const outcome = await runChunkReviewWithJudgment({
-      chunk,
-      allChunks: [chunk],
-      plan: emptyPlan(chunk),
-      rawReport: f.agentReport,
-      projectDir: "/tmp/unused-by-mock",
-    }, mockHook);
+  it("a deferral is the worker's typed word, however the plan's done-when is worded", () => {
+    const deferred = done({ doneWhen: "deferred", launchReadiness: [{ what: "live check", howToVerify: "something about staging" }] });
+    expect(gateDoneWhen(chunkReportOf(deferred))).toBeNull();
+    expect(review(deferred).action).toBe("proceed");
+  });
+});
 
+describe("the worker's own typed word that it stopped", () => {
+  // A blocked worker once went straight to a halt for "user attention"; it goes
+  // to the lead or the advisor, and only they stop a build.
+  it("blocked goes back with what to do, never a halt from the gate", () => {
+    const f = gateDoneWhen(chunkReportOf(stopped({ note: "missing creds" })))!;
+    expect(f).toMatchObject({ gate: "done-when", action: "push_back" });
+    expect(review(stopped()).action).toBe("push_back");
+  });
+
+  // label-check-sol chunk 1 (2026-11-24): the phone dropped off ADB, the
+  // worker reported partial, and the build halted for the owner.
+  it("a worker that lost the device is told how to defer the device run", () => {
+    const f = gateDoneWhen(chunkReportOf(stopped({
+      status: "partial", note: "The release APK built and installed. On the retry after unlock, ADB no longer listed the phone.",
+    })))!;
+    expect(f.action).toBe("push_back");
+    expect(f.reasoning).toContain("a phone or emulator that is not reachable");
+    expect(f.reasoning).toContain("launch_readiness");
+    expect(f.reasoning).toContain("ADB no longer listed the phone");
+  });
+
+  // label-check-sol (2026-11-24): every check run, the app seen on an
+  // emulator, and partial only because the worker could not dispatch the
+  // skeptic the engine runs next. The review that follows decides.
+  it("partial with its done-when met is left to the engine's review", () => {
+    expect(gateDoneWhen(chunkReportOf(done({ status: "partial", note: "could not dispatch a skeptic" })))).toBeNull();
+  });
+
+  it("done-when unmet reads as stopped, whatever status is beside it", () => {
+    // report-tools.ts rejects done + unmet when the worker calls; the gate still
+    // reads unmet as stopped for any report that carries it.
+    expect(gateDoneWhen(chunkReportOf({ ...done(), status: "partial", doneWhen: "unmet" }))!.action).toBe("push_back");
+    expect(gateDoneWhen(chunkReportOf({ ...done(), doneWhen: "unmet" }))!.action).toBe("push_back");
+  });
+
+  // Jul 2 2026 food-truck run: chunk 2 halted with only "STATUS=blocked; needs
+  // user attention"; the blocker lived in a finished agent's session.
+  it("the reason carries the worker's note, its spec gap and its question for the owner", () => {
+    const f = gateDoneWhen(chunkReportOf(stopped({
+      note: "write gate rejected leaflet CSS from cdnjs",
+      specGaps: "the spec does not say whether the map may self-host leaflet assets",
+      ownerQuestion: "self-host the map assets?",
+    })))!;
+    expect(f.reasoning).toContain("write gate rejected leaflet CSS");
+    expect(f.reasoning).toContain("self-host leaflet assets");
+    expect(f.reasoning).toContain("Question for the owner: self-host the map assets?");
+  });
+
+  // Jul 2 2026, food-truck chunk 2: a worker stopped on missing Supabase keys
+  // and the owner typed the fake-keys recovery by hand. Every stopped worker
+  // is told it now; no wording has to match for it to be said.
+  it("every stopped worker is told the placeholder-credentials recovery and where an owner's question goes", () => {
+    for (const note of ["Build fails on missing Supabase env vars.", "The detail view could be a modal or a page."]) {
+      const f = gateDoneWhen(chunkReportOf(stopped({ note })))!;
+      expect(f.reasoning).toContain("placeholder");
+      expect(f.reasoning).toContain("launch_readiness");
+      expect(f.reasoning).toContain("goes in owner_question");
+      expect(f.reasoning).toContain("machine_blocked");
+    }
+  });
+});
+
+// What a machine refuses is nobody's to fix in the build: it takes the road
+// the build check's own refusal finding takes (the lead, or the owner).
+describe("a command the worker says this machine refused", () => {
+  const kotlin = { check: "npm run check:kotlin", reason: "tree-sitter-kotlin.node was blocked by Application Control" };
+
+  it("stops the chunk as build-refused, naming the command, when the worker could not finish", () => {
+    const f = gateDoneWhen(chunkReportOf(stopped({ machineBlocked: [kotlin] })))!;
+    expect(f).toMatchObject({ gate: "build-refused", action: "push_back", refused: { command: "npm run check:kotlin" } });
+    expect(f.refused!.what).toContain("by the worker's account");
+    expect(f.reasoning).toContain("No worker can change the machine.");
+  });
+
+  it("is owed to the owner, with the chunk, when the worker finished the rest", async () => {
+    expect(gateDoneWhen(chunkReportOf(done({ machineBlocked: [kotlin] })))).toBeNull();
+    const outcome = await reviewWork(done({ machineBlocked: [kotlin] }));
+    expect(outcome.action).toBe("proceed");
+    expect(outcome.owed).toEqual([{
+      check: "refused, by the worker's account: npm run check:kotlin",
+      why: "the worker says this machine refused `npm run check:kotlin`: tree-sitter-kotlin.node was blocked by Application Control",
+    }]);
+  });
+});
+
+describe("a question only the owner can answer", () => {
+  it("does not hold a finished chunk: it lands with the question on the owner's list", async () => {
+    const outcome = await reviewWork(done({ ownerQuestion: "modal or page for the detail view?" }));
+    expect(outcome.action).toBe("proceed");
+    expect(outcome.owed).toEqual([{ check: "owner question", why: "the worker asks the owner: modal or page for the detail view?" }]);
+  });
+
+  it("a finished chunk with nothing to ask owes nothing", async () => {
+    expect((await reviewWork(done())).owed).toBeUndefined();
+  });
+});
+
+// The spec-gap hook reads the chunk's changed files against the constitution:
+// it catches a rule the worker never surfaced (a booking page that renders
+// stale availability with no notice), which no field of a report can.
+describe("the spec-gap judgment hook", () => {
+  const STALE = "Stale-data warning: when a calendar connection is degraded the page must show a visible notice.";
+
+  it("turns a proceed into amend_spec, with the gap on the report", async () => {
+    const hook: JudgmentHook = async () => ({ specGap: STALE, reasoning: "Constitution #8: no silent failures." });
+    const outcome = await reviewWork(done(), hook);
     expect(outcome.action).toBe("amend_spec");
     expect(outcome.report.specGaps).toContain("Stale-data");
     expect(outcome.reasoning).toContain("Constitution #8");
-    expect(outcome.findings.find(f => f.gate === "spec-gap-judgment")).toBeDefined();
+    expect(outcome.findings.find((f) => f.gate === "spec-gap-judgment")).toBeDefined();
   });
 
-  it("hook returning null leaves the mechanical verdict (proceed) intact", async () => {
-    const f = loadFixture("chunk-12-stale-data-gap.json");
-    const chunk = chunkFromFixture(f);
-    const nullHook: JudgmentHook = async () => null;
-    const outcome = await runChunkReviewWithJudgment({
-      chunk,
-      allChunks: [chunk],
-      plan: emptyPlan(chunk),
-      rawReport: f.agentReport,
-      projectDir: "/tmp/unused",
-    }, nullHook);
-    expect(outcome.action).toBe("proceed");
+  it("returning null, or throwing, leaves the proceed intact", async () => {
+    expect((await reviewWork(done(), async () => null)).action).toBe("proceed");
+    expect((await reviewWork(done(), async () => { throw new Error("classifier down"); })).action).toBe("proceed");
   });
 
-  it("hook is NOT called when the mechanical verdict already sends the chunk back", async () => {
-    const f = loadFixture("chunk-06-silent-deferral.json");
-    const chunk = chunkFromFixture(f);
-    let hookCalled = false;
-    const trackingHook: JudgmentHook = async () => {
-      hookCalled = true;
-      return { specGap: "should not apply", reasoning: "should not run" };
-    };
-    const outcome = await runChunkReviewWithJudgment({
-      chunk,
-      allChunks: [chunk],
-      plan: emptyPlan(chunk),
-      rawReport: f.agentReport,
-      projectDir: "/tmp/unused",
-    }, trackingHook);
-    expect(outcome.action).toBe("push_back");
-    expect(hookCalled).toBe(false);
-  });
-
-  it("hook throwing returns the mechanical verdict (fail-open)", async () => {
-    const f = loadFixture("chunk-12-stale-data-gap.json");
-    const chunk = chunkFromFixture(f);
-    const throwingHook: JudgmentHook = async () => { throw new Error("classifier down"); };
-    const outcome = await runChunkReviewWithJudgment({
-      chunk,
-      allChunks: [chunk],
-      plan: emptyPlan(chunk),
-      rawReport: f.agentReport,
-      projectDir: "/tmp/unused",
-    }, throwingHook);
-    expect(outcome.action).toBe("proceed");
+  it("is not called when the worker's own word already sent the chunk back", async () => {
+    const hook = vi.fn<JudgmentHook>(async () => ({ specGap: "should not apply", reasoning: "should not run" }));
+    expect((await reviewWork(stopped(), hook)).action).toBe("push_back");
+    expect(hook).not.toHaveBeenCalled();
   });
 });
 
@@ -388,160 +347,6 @@ describe("Additive-diff gate", () => {
   });
 });
 
-describe("Done-when gate edge cases", () => {
-  const baseChunk: ParsedChunk = {
-    number: 99,
-    title: "Test",
-    phase: "Phase X",
-    klass: "trunk",
-    slice: "",
-    dependsOn: [],
-    scenarios: "",
-    doneWhen: "integration test returns 200",
-    rawSection: "",
-  };
-
-  // A blocked worker went straight to a halt for "user attention"; it goes
-  // back with what to do, and only the push-back advisor stops a build.
-  it("sends STATUS: blocked back to the worker, never halting the build itself", () => {
-    const r = parseChunkReport(
-      "STATUS: blocked\nDONE_WHEN: unmet\nCHANGED: none\nTESTS: n/a\nNEW_FAILURES: none\n" +
-      "PRE_EXISTING_FAILURES: none\nSPEC_GAPS: none\nLAUNCH_READINESS: none\nNOTE: missing creds"
-    );
-    expect(gateDoneWhen(baseChunk, r)!.action).toBe("push_back");
-  });
-
-  // label-check-sol chunk 1 (2026-11-24): the phone dropped off ADB, the
-  // worker reported partial, and the build halted for the owner.
-  it("a worker that lost the device is told to defer the device run, not halted", () => {
-    const r = parseChunkReport(
-      "STATUS: partial\nDONE_WHEN: unmet\nCHANGED: app.config.ts\nTESTS: 13/13\nNEW_FAILURES: none\n" +
-      "PRE_EXISTING_FAILURES: none\nSPEC_GAPS: none\nLAUNCH_READINESS: none\n" +
-      "NOTE: The release APK built and installed. On the retry after unlock, ADB no longer listed the phone."
-    );
-    const f = gateDoneWhen(baseChunk, r)!;
-    expect(f.action).toBe("push_back");
-    expect(f.reasoning).toContain("a phone or emulator that is not reachable");
-    expect(f.reasoning).toContain("ADB no longer listed the phone");
-  });
-
-  it("routes an explicit blocking spec gap through bounded advisor recovery", () => {
-    const r = parseChunkReport(
-      "STATUS: blocked\nDONE_WHEN: unmet\nCHANGED: none\nTESTS: n/a\nNEW_FAILURES: none\n" +
-      "PRE_EXISTING_FAILURES: none\nSPEC_GAPS: Define the role redirect matrix.\n" +
-      "LAUNCH_READINESS: none\nNOTE: stopped instead of guessing"
-    );
-    const finding = gateDoneWhen(baseChunk, r)!;
-    expect(finding.action).toBe("push_back");
-    expect(finding.reasoning).toMatch(/advisor/i);
-  });
-
-  // label-check-sol (2026-11-24): every check run, the app seen on an
-  // emulator, and STATUS: partial only because the worker could not dispatch
-  // the skeptic the engine runs next. The review that follows decides.
-  it("a partial status with its done-when met is left to the engine's review", () => {
-    const r = parseChunkReport(
-      "STATUS: partial\nDONE_WHEN: met\nCHANGED: scripts/check-structure.mjs\nTESTS: 13/13\nNEW_FAILURES: none\n" +
-      "PRE_EXISTING_FAILURES: none\nSPEC_GAPS: none\nLAUNCH_READINESS: none\n" +
-      "NOTE: The remaining blocker is independent review: this worker could not dispatch a skeptic."
-    );
-    expect(gateDoneWhen(baseChunk, r)).toBeNull();
-  });
-
-  it("sends DONE_WHEN: unmet back to the worker", () => {
-    const r = parseChunkReport(
-      "STATUS: done\nDONE_WHEN: unmet\nCHANGED: x.ts\nTESTS: 0/0\nNEW_FAILURES: none\n" +
-      "PRE_EXISTING_FAILURES: none\nSPEC_GAPS: none\nLAUNCH_READINESS: none\nNOTE: ok"
-    );
-    expect(gateDoneWhen(baseChunk, r)!.action).toBe("push_back");
-  });
-
-  it("sends a deferral of a mechanical contract back to the worker to run it", () => {
-    const r = parseChunkReport(
-      "STATUS: done\nDONE_WHEN: deferred-to-launch-readiness\nCHANGED: x.ts\nTESTS: 5/5\n" +
-      "NEW_FAILURES: none\nPRE_EXISTING_FAILURES: none\nSPEC_GAPS: none\n" +
-      "LAUNCH_READINESS: integration test needs real creds; set X env then run pnpm test Y\nNOTE: ok"
-    );
-    const f = gateDoneWhen(baseChunk, r)!;
-    expect(f.action).toBe("push_back");
-    expect(f.reasoning).toContain("Run every check the done-when names");
-  });
-
-  // label-check chunk 7 (2026-11-22): the plan told the worker to leave the
-  // live API call for launch, and the gate set the chunk aside for doing so,
-  // three runs in a row.
-  it("passes a deferral the done-when itself orders", () => {
-    const chunk = {
-      ...baseChunk,
-      doneWhen:
-        "standardize() calls GET https://api.example.org/search and returns a name. Tests use the committed fixture. " +
-        "Do not call the live API. Report this in LAUNCH_READINESS: \"Live check: GET returns 200 (run by the orchestrator before launch).\"",
-    };
-    const r = parseChunkReport(
-      "STATUS: done\nDONE_WHEN: deferred-to-launch-readiness\nCHANGED: client.ts\nTESTS: 132/132\n" +
-      "NEW_FAILURES: none\nPRE_EXISTING_FAILURES: none\nSPEC_GAPS: none\n" +
-      "LAUNCH_READINESS: Live check: run GET https://api.example.org/search?q=x and assert it returns 200 (run by the orchestrator before launch)\nNOTE: ok"
-    );
-    expect(gateDoneWhen(chunk, r)).toBeNull();
-    expect(gateLaunchReadiness(r)).toBeNull();
-  });
-
-  it("permits 'met' when NOTE has no contradictory phrases", () => {
-    const r = parseChunkReport(
-      "STATUS: done\nDONE_WHEN: met\nCHANGED: x.ts\nTESTS: 10/10\nNEW_FAILURES: none\n" +
-      "PRE_EXISTING_FAILURES: none\nSPEC_GAPS: none\nLAUNCH_READINESS: none\nNOTE: clean"
-    );
-    expect(gateDoneWhen(baseChunk, r)).toBeNull();
-  });
-});
-
-describe("Launch-readiness gate", () => {
-  it("permits an item with concrete verify steps", () => {
-    const r = parseChunkReport(
-      "STATUS: done\nDONE_WHEN: met\nCHANGED: x.ts\nTESTS: 5/5\nNEW_FAILURES: none\n" +
-      "PRE_EXISTING_FAILURES: none\nSPEC_GAPS: none\n" +
-      "LAUNCH_READINESS: Apple Sign In e2e — set APPLE_* envs, run real OAuth round-trip, assert session cookie issued.\n" +
-      "NOTE: clean"
-    );
-    expect(gateLaunchReadiness(r)).toBeNull();
-  });
-
-  it("sends a vague launch-readiness item back to the worker to sharpen", () => {
-    const r = parseChunkReport(
-      "STATUS: done\nDONE_WHEN: met\nCHANGED: x.ts\nTESTS: 5/5\nNEW_FAILURES: none\n" +
-      "PRE_EXISTING_FAILURES: none\nSPEC_GAPS: none\n" +
-      "LAUNCH_READINESS: something about staging at some point.\nNOTE: clean"
-    );
-    expect(gateLaunchReadiness(r)!.action).toBe("push_back");
-  });
-
-  // label-check chunk 7's first set-aside: "none (DSLD needs no key)" read as a vague item.
-  it("reads 'none' with an explanation after it as no item", () => {
-    const r = parseChunkReport(
-      "STATUS: done\nDONE_WHEN: met\nCHANGED: x.ts\nTESTS: 5/5\nNEW_FAILURES: none\n" +
-      "PRE_EXISTING_FAILURES: none\nSPEC_GAPS: none\n" +
-      "LAUNCH_READINESS: none (DSLD needs no key)\nNOTE: clean"
-    );
-    expect(gateLaunchReadiness(r)).toBeNull();
-  });
-});
-
-// Whether tests pass is measured by the build check, never read from the
-// worker's own NEW_FAILURES line: "none observed" parsed as one failing test
-// and set a finish fix aside with no fix round (label-check-sol, 2026-11-25).
-describe("the worker's own failure list holds nothing back", () => {
-  it.each(["none observed", "cancel_returns_409, dst_fall_back", "none"])("NEW_FAILURES: %s", (said) => {
-    const chunk = chunkFromFixture(loadFixture("chunk-clean-proceed.json"));
-    const outcome = runChunkReview({
-      chunk, allChunks: [chunk], plan: emptyPlan(chunk),
-      rawReport: "STATUS: done\nDONE_WHEN: met\nCHANGED: x.ts\nTESTS: 5/8\n" +
-        `NEW_FAILURES: ${said}\nPRE_EXISTING_FAILURES: none\nSPEC_GAPS: none\nLAUNCH_READINESS: none\nNOTE: ok`,
-    });
-    expect(outcome.findings.filter((f) => f.action === "halt")).toEqual([]);
-    expect(outcome.report.note).toBe("ok");
-  });
-});
-
 describe("Phase-gate detector", () => {
   it("halts at the last chunk of a phase referenced in phase-gates section", () => {
     const c5: ParsedChunk = {
@@ -571,231 +376,60 @@ describe("Phase-gate detector", () => {
   });
 });
 
-describe("Spec-gap judgment gate", () => {
-  it("halts on a 'two options' fork in NOTE", () => {
-    const r = parseChunkReport(
-      "STATUS: done\nDONE_WHEN: met\nCHANGED: x.ts\nTESTS: 5/5\n" +
-      "NEW_FAILURES: none\nPRE_EXISTING_FAILURES: none\nSPEC_GAPS: none\n" +
-      "LAUNCH_READINESS: none\nNOTE: shipped. but two options for the edge case — A or B, your call."
-    );
-    expect(gateSpecGapJudgment(r)!.action).toBe("halt");
-  });
-
-  it("halts on Constitution + gray-area language", () => {
-    const r = parseChunkReport(
-      "STATUS: done\nDONE_WHEN: met\nCHANGED: x.ts\nTESTS: 5/5\n" +
-      "NEW_FAILURES: none\nPRE_EXISTING_FAILURES: none\nSPEC_GAPS: none\n" +
-      "LAUNCH_READINESS: none\nNOTE: shipped. Constitution #8 concern — there's a silent fallback to defaults."
-    );
-    expect(gateSpecGapJudgment(r)!.action).toBe("halt");
-  });
-
-  it("does NOT halt on a clean NOTE", () => {
-    const r = parseChunkReport(
-      "STATUS: done\nDONE_WHEN: met\nCHANGED: x.ts\nTESTS: 5/5\n" +
-      "NEW_FAILURES: none\nPRE_EXISTING_FAILURES: none\nSPEC_GAPS: none\n" +
-      "LAUNCH_READINESS: none\nNOTE: shipped cleanly. 5 unit tests pass."
-    );
-    expect(gateSpecGapJudgment(r)).toBeNull();
-  });
-});
-
-describe("Fixture directory smoke test", () => {
-  it("at least the 4 named fixtures exist", () => {
-    const files = readdirSync(FIXTURE_DIR);
-    expect(files).toContain("chunk-06-silent-deferral.json");
-    expect(files).toContain("chunk-10-silent-fallback.json");
-    expect(files).toContain("chunk-12-stale-data-gap.json");
-    expect(files).toContain("chunk-clean-proceed.json");
-  });
-});
-
-describe("Review reasons carry the worker's own words", () => {
-  // Regression (Jul 2 2026 food-truck run): chunk 2 halted with only
-  // "STATUS=blocked; needs user attention" — the actual blocker lived in the
-  // worker's NOTE, which existed nowhere durable. Diagnosis required log
-  // spelunking across a transient agent session.
-  it("blocked spec-gap recovery includes NOTE and SPEC_GAPS", () => {
-    const r = parseChunkReport(
-      "STATUS: blocked\nDONE_WHEN: unmet\nCHANGED: none\nTESTS: n/a\n" +
-      "NEW_FAILURES: none\nPRE_EXISTING_FAILURES: none\n" +
-      "SPEC_GAPS: spec does not say whether the map may self-host leaflet assets\n" +
-      "LAUNCH_READINESS: none\n" +
-      "NOTE: write gate rejected leaflet CSS from cdnjs; need self-host guidance"
-    );
-    const f = gateDoneWhen(chunkFromFixture(loadFixture("chunk-clean-proceed.json")), r)!;
-    expect(f.action).toBe("push_back");
-    expect(f.reasoning).toContain("write gate rejected leaflet CSS");
-    expect(f.reasoning).toContain("self-host leaflet assets");
-  });
-
-  it("unmet done-when push-back includes NOTE", () => {
-    const r = parseChunkReport(
-      "STATUS: done\nDONE_WHEN: unmet\nCHANGED: x.ts\nTESTS: 1/2\n" +
-      "NEW_FAILURES: none\nPRE_EXISTING_FAILURES: none\nSPEC_GAPS: none\n" +
-      "LAUNCH_READINESS: none\nNOTE: e2e assertion needs a running dev server"
-    );
-    const f = gateDoneWhen(chunkFromFixture(loadFixture("chunk-clean-proceed.json")), r)!;
-    expect(f.action).toBe("push_back");
-    expect(f.reasoning).toContain("running dev server");
-  });
-});
-
-describe("Missing-credentials recovery (the no-Supabase-keys class)", () => {
-  // Regression (Jul 2 2026, food-truck chunk 2): worker reported
-  // STATUS=partial with "Build fails solely on missing Supabase credentials
-  // (runtime infra, not code)" and the loop halted — the user had to type the
-  // fake-keys recovery by hand. The gate now automates it as a retry-once.
-  const report = (status: string, note: string, launch = "none", doneWhen = "unmet") =>
-    parseChunkReport(
-      `STATUS: ${status}\nDONE_WHEN: ${doneWhen}\nCHANGED: app/page.tsx\nTESTS: n/a\n` +
-      `NEW_FAILURES: none\nPRE_EXISTING_FAILURES: none\nSPEC_GAPS: none\n` +
-      `LAUNCH_READINESS: ${launch}\nNOTE: ${note}`
-    );
-
-  it("converts a cred-blocked partial into push_back carrying the recovery instruction", () => {
-    const f = gateDoneWhen(
-      chunkFromFixture(loadFixture("chunk-clean-proceed.json")),
-      report("partial", "Build fails solely on missing Supabase credentials (runtime infra, not code). All chunk 2 logic implemented.")
-    )!;
-    expect(f.action).toBe("push_back");
-    expect(f.reasoning).toContain("placeholder");
-    expect(f.reasoning).toContain("LAUNCH_READINESS");
-    expect(f.reasoning).toContain("missing Supabase credentials"); // worker words travel too
-  });
-
-  it("matches the env-var phrasing too", () => {
-    const f = gateDoneWhen(
-      chunkFromFixture(loadFixture("chunk-clean-proceed.json")),
-      report("blocked", "Build fails on missing Supabase env vars.")
-    )!;
-    expect(f.action).toBe("push_back");
-  });
-
-  // Whether a decision is the owner's is the push-back advisor's call: the
-  // worker is told to name the choice and build the safest option meanwhile.
-  it("a non-credential block goes back with how to name an owner's decision", () => {
-    const f = gateDoneWhen(
-      chunkFromFixture(loadFixture("chunk-clean-proceed.json")),
-      report("blocked", "Spec is ambiguous about whether the detail view is a modal or a page; need a decision.")
-    )!;
-    expect(f.action).toBe("push_back");
-    expect(f.reasoning).toContain("goes in SPEC_GAPS");
-  });
-
-  // chunk-06's done-when ("integration test against a real Google dev
-  // workspace returns…") IS mechanical per the gate's regex — the right
-  // fixture for deferral behavior.
-  it("allows a mechanical done-when deferral whose LAUNCH_READINESS names the credentials", () => {
-    const f = gateDoneWhen(
-      chunkFromFixture(loadFixture("chunk-06-silent-deferral.json")),
-      report(
-        "done",
-        "Placeholder envs in .env.local; app builds and boots without the live service.",
-        "Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to real project values, then verify realtime map updates end-to-end.",
-        "deferred-to-launch-readiness"
-      )
-    );
-    expect(f).toBeNull(); // sanctioned deferral — gateLaunchReadiness enforces concreteness
-  });
-
-  it("still refuses a mechanical deferral with no credential story, and sends it back to run", () => {
-    const f = gateDoneWhen(
-      chunkFromFixture(loadFixture("chunk-06-silent-deferral.json")),
-      report("done", "Ran out of steam on the tests.", "verify later", "deferred-to-launch-readiness")
-    )!;
-    expect(f.action).toBe("push_back");
-    expect(f.reasoning).toContain("silent-deferral");
-  });
-});
-
-// Regression (2026-07-03): the "says it's fixed but isn't" class. Every gate
-// above reasons over STRINGS THE AGENT TYPED. A chunk that writes a perfectly
-// clean report — STATUS: done / DONE_WHEN: met / TESTS: 5/5 / NEW_FAILURES:
-// none — about a build that actually fails (or a browser game that renders a
-// blank canvas) passed every string gate and committed to main. The
-// build-execution gate is the first that OBSERVES behavior; these tests pin
-// that a clean report can no longer proceed past an observed failure.
+// Regression (2026-07-03): the "says it's fixed but isn't" class. A worker
+// that reports done about a build that fails (or a browser game that renders
+// a blank canvas) once passed every check and committed to main. The build
+// check observes behaviour; a clean report cannot proceed past what it saw.
 describe("build-exec gate: observed failure overrides a clean report", () => {
-  const cleanReport =
-    "STATUS: done\nDONE_WHEN: met\nCHANGED: index.html, game.js\nTESTS: 5/5\n" +
-    "NEW_FAILURES: none\nPRE_EXISTING_FAILURES: none\nSPEC_GAPS: none\n" +
-    "LAUNCH_READINESS: none\nNOTE: game builds and plays.";
-
-  const withExec = (chunk: ParsedChunk, exec: BuildExecRunner, hook?: JudgmentHook) =>
-    runChunkReviewWithJudgment(
-      { chunk, allChunks: [chunk], plan: emptyPlan(chunk), rawReport: cleanReport, projectDir: "/tmp/unused-by-stub" },
-      hook,
-      undefined,
-      exec,
-    );
-
   it("halts a clean report when the build-exec gate observes a real failure", async () => {
-    const chunk = chunkFromFixture(loadFixture("chunk-clean-proceed.json"));
-    // Sanity: mechanically this report is a clean proceed — the bug is that
-    // that USED to be the final verdict.
-    expect(runChunkReview({ chunk, allChunks: [chunk], plan: emptyPlan(chunk), rawReport: cleanReport }).action).toBe("proceed");
+    // Sanity: by the report alone this is a clean proceed.
+    expect(review(done()).action).toBe("proceed");
 
     const failingExec: BuildExecRunner = async () => ({
       gate: "build-exec",
       action: "halt",
       reasoning: "`npm run build` exited 1 — the report claimed done but the command actually FAILS.",
     });
-    const outcome = await withExec(chunk, failingExec);
-    expect(outcome.action).toBe("halt"); // was silently "proceed" before the gate
+    const outcome = await reviewWork(done(), undefined, failingExec);
+    expect(outcome.action).toBe("halt");
     expect(outcome.findings.find(g => g.gate === "build-exec")).toBeDefined();
     expect(outcome.reasoning).toContain("actually FAILS");
   });
 
   it("proceeds when the build-exec gate observes success (gate doesn't just halt everything)", async () => {
-    const chunk = chunkFromFixture(loadFixture("chunk-clean-proceed.json"));
-    const passingExec: BuildExecRunner = async () => null;
-    const outcome = await withExec(chunk, passingExec);
-    expect(outcome.action).toBe("proceed");
+    expect((await reviewWork(done(), undefined, async () => null)).action).toBe("proceed");
   });
 
   it("runs BEFORE the LLM hook — a build failure halts even when the hook would proceed", async () => {
-    const chunk = chunkFromFixture(loadFixture("chunk-clean-proceed.json"));
-    let hookCalled = false;
-    const hook: JudgmentHook = async () => { hookCalled = true; return null; };
+    const hook = vi.fn<JudgmentHook>(async () => null);
     const failingExec: BuildExecRunner = async () => ({
       gate: "build-exec", action: "halt", reasoning: "built page renders NOTHING — blank screen.",
     });
-    const outcome = await withExec(chunk, failingExec, hook);
-    expect(outcome.action).toBe("halt");
-    expect(hookCalled).toBe(false); // exec gate short-circuited before the hook
+    expect((await reviewWork(done(), hook, failingExec)).action).toBe("halt");
+    expect(hook).not.toHaveBeenCalled();
   });
 
   it("a passing structure check's size note rides the proceed outcome to the next chunk", async () => {
-    const chunk = chunkFromFixture(loadFixture("chunk-clean-proceed.json"));
     const notingExec: BuildExecRunner = async (input) => {
       input.onStructureNote?.("nearing the size cap: src/game.ts: 330 code lines (cap 400)");
       return null;
     };
-    const outcome = await withExec(chunk, notingExec);
+    const outcome = await reviewWork(done(), undefined, notingExec);
     expect(outcome.action).toBe("proceed");
     expect(outcome.structureNote).toContain("src/game.ts: 330 code lines");
     expect(outcome.findings.some((f) => f.gate === "build-exec")).toBe(false);
   });
 
-  it("fails open — a crashing build-exec runner leaves the mechanical proceed intact", async () => {
-    const chunk = chunkFromFixture(loadFixture("chunk-clean-proceed.json"));
-    const throwingExec: BuildExecRunner = async () => { throw new Error("playwright missing"); };
-    const outcome = await withExec(chunk, throwingExec);
+  it("fails open — a crashing build-exec runner leaves the proceed intact, with the check owed", async () => {
+    const outcome = await reviewWork(done(), undefined, async () => { throw new Error("playwright missing"); });
     expect(outcome.action).toBe("proceed");
+    expect(outcome.owed?.[0]).toMatchObject({ check: "build and tests" });
   });
 
-  it("does NOT run when the mechanical verdict already sends the chunk back", async () => {
-    const f = loadFixture("chunk-06-silent-deferral.json");
-    const chunk = chunkFromFixture(f);
-    let execCalled = false;
-    const trackingExec: BuildExecRunner = async () => { execCalled = true; return null; };
-    const outcome = await runChunkReviewWithJudgment(
-      { chunk, allChunks: [chunk], plan: emptyPlan(chunk), rawReport: f.agentReport, projectDir: "/tmp/unused" },
-      undefined, undefined, trackingExec,
-    );
-    expect(outcome.action).toBe("push_back");
-    expect(execCalled).toBe(false);
+  it("does NOT run when the worker's own word already sent the chunk back", async () => {
+    const trackingExec = vi.fn<BuildExecRunner>(async () => null);
+    expect((await reviewWork(stopped(), undefined, trackingExec)).action).toBe("push_back");
+    expect(trackingExec).not.toHaveBeenCalled();
   });
 });
 

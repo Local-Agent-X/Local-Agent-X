@@ -86,7 +86,7 @@ export interface ChunkAgentInvocation {
 }
 
 export interface ChunkAgentResult {
-  /** Final agent output (the worker's STATUS / DONE_WHEN / NOTE block). */
+  /** What the agent said in text. Its report is not here: see chunkReport and the like below. */
   stdout: string;
   /** 0 on clean completion, non-zero on error (mirrors SubprocessResult). */
   exitCode: number;
@@ -119,7 +119,7 @@ const DISCIPLINE_BLOCK =
   `## Discipline (load-bearing — do not skip)\n\n` +
   `- **You are a non-interactive worker.** No human is watching. Don't pause to ask, ` +
   `don't request a planning conversation, don't wait for confirmation. If you'd normally ` +
-  `ask the user, surface it in the final report's NOTE field and ship the safest available choice.\n` +
+  `ask the user, put the question in your report's owner_question and ship the safest available choice.\n` +
   `- **Build from \`spec/\`.** The acceptance scenarios this build is scored against are sealed ` +
   `outside the project, and no tool can read them: the spec is the whole of what you build to. ` +
   `\`twins/\`, when present, are stand-ins for external services; use them.\n` +
@@ -128,47 +128,40 @@ const DISCIPLINE_BLOCK =
   `- **Minimum change.** Implement what the assigned task requires. No refactoring of neighbors, ` +
   `no unrelated abstractions.\n` +
   `- **Run the tests.** If done-when names tests, those tests must pass before you report done. ` +
-  `Don't mark deferred verifications as done — name them explicitly in NOTE so the reviewer can ` +
-  `route to launch-readiness.\n` +
+  `Don't mark a check you could not make as done: list it in your report's launch_readiness with how ` +
+  `to make it.\n` +
   `- **Missing third-party credentials are never blockers.** If a service key/URL isn't configured ` +
   `(Supabase, Stripe, etc.): put clearly-fake placeholder values in the framework's local env file ` +
   `(e.g. .env.local), make client construction tolerate them — build and dev boot must succeed ` +
   `without the real service, never throw at import time — implement everything that doesn't need ` +
-  `the live service, list the real-credential setup/verify steps in LAUNCH_READINESS (exact env ` +
-  `var names), and report DONE_WHEN: deferred-to-launch-readiness instead of blocked/partial. ` +
+  `the live service, list the real-credential setup/verify steps in your report's launch_readiness ` +
+  `(exact env var names), and report done_when "deferred" instead of blocked or partial. ` +
   `Placeholders must be plain low-entropy words (placeholder-anon-key), NEVER realistic-looking ` +
   `tokens or JWTs — realistic fakes trip the secret-shape detectors and get your shell blocked.\n` +
-  `- **Don't touch \`spec/\`.** Spec amendments are the reviewer's job. Surface gaps in NOTE.\n` +
+  `- **Don't touch \`spec/\`.** Spec amendments are the reviewer's job. Put a gap in your report's spec_gaps.\n` +
+  `- **A command this machine refuses is not your bug.** If the operating system or a policy blocks a command ` +
+  `(it says so in what it prints), do not rewrite code to get around it and do not retry it: list it in your ` +
+  `report's machine_blocked with what it printed, and finish everything else.\n` +
   `- **The independent review is the engine's, after you.** Once you report, the build engine runs the ` +
   `build and tests, sends a separate skeptic agent at your change, and judges the held-out scenarios. Do not ` +
   `try to run, dispatch or wait for that review, and do not report partial or blocked for it: when your ` +
-  `done-when is met, report STATUS: done.\n\n` +
-  `## Report format (the review pass parses this — keep it exact)\n\n` +
-  `When you finish, reply with EXACTLY this block (no other text after it). ` +
-  `Your run's LAST message must be this block by itself: never end the run on a ` +
-  `tool call — after your final task_update, send the report as plain text. ` +
-  `Column-0 UPPERCASE field lines, no bold, no bullets, no code fence:\n\n` +
-  `STATUS: done | blocked | partial\n` +
-  `DONE_WHEN: met | deferred-to-launch-readiness | unmet\n` +
-  `CHANGED: <comma-separated file paths>\n` +
-  `TESTS: <pass-count>/<total-count> | n/a\n` +
-  `NEW_FAILURES: <test names introduced by this chunk, or none>\n` +
-  `PRE_EXISTING_FAILURES: <test names that already failed before this chunk, or none>\n` +
-  `SPEC_GAPS: <constraints you found missing that should be added to spec, or none>\n` +
-  `LAUNCH_READINESS: <items requiring real third-party creds / HTTPS / prod data, or none — each item must have "how to verify" steps>\n` +
-  `NOTE: <anything the user needs to know>`;
+  `done-when is met, report status "done".\n\n` +
+  `## Your report\n\n` +
+  `End your run by calling \`chunk_report\`: it is the last thing you do, after your final task_update, and ` +
+  `your run ends with it. Its fields say what each is for. Do not write the report as text, and do not report ` +
+  `test counts or the files you changed: the engine runs the build and tests and reads the changes from git.`;
 
 const SCENARIO_FIX_DISCIPLINE_BLOCK =
   `## Scenario-fix constraints — DO NOT VIOLATE\n\n` +
   `1. **Code matches spec, never the reverse.** If the scenario fails because the spec is wrong, ` +
-  `STOP and report STATUS: blocked with a clear SPEC_GAPS entry. The reviewer decides whether to amend additively.\n` +
+  `STOP and report status "blocked" with the gap in spec_gaps. The reviewer decides whether to amend additively.\n` +
   `2. **No \`spec/\` edits.** You may NOT touch any file under spec/. The orchestrator owns spec changes.\n` +
   `3. **No test bypassing.** If a test fails because the code is wrong, fix the code. Do not relax ` +
   `assertions, comment out tests, or stub returns to make a test pass.\n` +
   `4. **No silent fallback.** A scenario failure about user-visible behavior gets a real fix, not a quiet swallow.\n` +
   `5. **Don't break passing scenarios.** Your fix must keep the currently-passing list passing.\n\n` +
-  `## Report format — same as chunk-runner\n\n` +
-  `STATUS / DONE_WHEN / CHANGED / TESTS / NEW_FAILURES / PRE_EXISTING_FAILURES / SPEC_GAPS / LAUNCH_READINESS / NOTE`;
+  `## Your report\n\n` +
+  `End your run by calling \`chunk_report\`: it is the last thing you do.`;
 
 /** The skeptic's probe folder, at the root of the tree it reviews: its `write`
  *  is fenced there, git never sees it, and it is deleted after the run. */
@@ -194,12 +187,12 @@ const SKEPTIC_DISCIPLINE_BLOCK =
   `(\`npx jest ${SKEPTIC_PROBE_DIR}/probe.test.ts\`, \`npx vitest run ${SKEPTIC_PROBE_DIR}/probe.test.ts\`). ` +
   `The folder is deleted when you finish and is never part of the change. A break you ran beats one you traced.\n\n` +
   SKEPTIC_BAR_BLOCK +
-  `## Verdict format (parsed — keep it exact)\n\n` +
-  `Your run's LAST message is exactly this, column-0 lines, nothing after:\n\n` +
-  `VERDICT: BROKEN | HOLDS\n` +
-  `GROUND: <BROKEN only: the contract line it breaks, quoted, with the file it is in; or one of: crash, data loss, security, test that cannot fail, false claim>\n` +
-  `FINDING: <BROKEN: what breaks, the input or case, file:line, and how you showed it. HOLDS: what you tried.>\n` +
-  `FOLLOW_UPS: <none, or one "- " line for each thing you found beyond the contract>`;
+  `## Your verdict\n\n` +
+  `End your run by calling \`skeptic_verdict\`: it is the last thing you do, and your run ends with it. ` +
+  `verdict is "broken" or "holds". For broken, ground is the contract line it breaks, quoted, with the file it ` +
+  `is in, or one of: crash, data loss, security, test that cannot fail, false claim; finding is what breaks, the ` +
+  `input or case, file:line, and how you showed it. For holds, finding is what you tried. follow_ups lists each ` +
+  `thing you found beyond the contract. Do not write the verdict as text.`;
 
 // The finish gates' break-it agents (finish-gates/breakers.ts): the whole app,
 // one angle each, after the last chunk landed. Not held to a chunk's contract:
@@ -213,8 +206,8 @@ const FINISH_BREAKER_DISCIPLINE_BLOCK =
   `A probe test in \`${SKEPTIC_PROBE_DIR}/\` run with the project's own test runner by its path is the usual way.\n` +
   `- Grade each finding: critical (data loss, a privacy or security hole, a crash on a main path), high (a main ` +
   `flow wrong or a stated rule broken), medium (a real defect off the main path), low (polish).\n` +
-  `- Report only what you showed. Nothing found is a valid answer: "FINDINGS: none".\n\n` +
-  `End with the FINDINGS block your task gives, nothing after it.`;
+  `- Report only what you showed. Nothing found is a valid answer: an empty list.\n\n` +
+  `End your run by calling \`breaker_findings\`: it is the last thing you do, and your run ends with it.`;
 
 /** What each role is: the methodology skill it inherits (none for the
  *  skeptic, which builds nothing), its closing discipline, its tools, and its

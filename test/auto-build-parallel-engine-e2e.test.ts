@@ -94,7 +94,7 @@ vi.mock("../src/auto-build/loop/run-chunk-once.js", () => ({
 
 const { runBuildLoop } = await import("../src/auto-build/loop.js");
 const { parsePlanText } = await import("../src/auto-build/plan-parser.js");
-const { parseChunkReport } = await import("../src/auto-build/chunk-review/report-parser.js");
+const { chunkReportOf } = await import("../src/auto-build/chunk-review/chunk-report.js");
 const { WORKTREE_BASE } = await import("../src/agency/worktree-core.js");
 const { cleanupWorktree } = await import("../src/agency/worktree.js");
 
@@ -104,7 +104,7 @@ function makeProceed(changed: string[]) {
     action: "proceed" as const,
     reasoning: "stub build proceeded",
     findings: [] as Array<{ gate: string; action: string; reasoning: string }>,
-    report: { ...parseChunkReport(""), changed },
+    report: chunkReportOf(undefined, changed),
   };
 }
 

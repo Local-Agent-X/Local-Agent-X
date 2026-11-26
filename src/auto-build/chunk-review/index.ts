@@ -13,17 +13,10 @@
  */
 
 import type { ParsedChunk, ParsedPlan } from "../plan-parser.js";
-import { parseChunkReport, type ChunkReport } from "./report-parser.js";
-import {
-  gateReportShape,
-  gateDoneWhen,
-  gateAdditiveDiff,
-  gatePhaseGate,
-  gateLaunchReadiness,
-  gateSpecGapJudgment,
-  type GateFinding,
-  type ReviewAction,
-} from "./gates.js";
+import { chunkReportOf, renderChunkReport, type ChunkReport } from "./chunk-report.js";
+import type { ChunkReportCall } from "../agents/agent-report.js";
+import { gateAdditiveDiff, gatePhaseGate, type GateFinding, type ReviewAction } from "./gates.js";
+import { gateDoneWhen } from "./gate-done-when.js";
 import type { JudgmentHook } from "./judgment-hook.js";
 import { runBuildExecGate, type BuildExecRunner } from "./gate-build-exec.js";
 import { BUILD_CHECK, chunkJudgingFinding, owedFromJudging, refusedCommandCheck, type ChunkJudge, type ChunkJudgeInput, type ChunkJudging, type OwedOnChunk } from "./chunk-verdict.js";
@@ -36,8 +29,10 @@ export interface ChunkReviewInput {
   allChunks: ParsedChunk[];
   /** The parsed plan (for phase-gates section, launch-readiness table). */
   plan: ParsedPlan;
-  /** Raw report text from the subprocess's stdout. */
-  rawReport: string;
+  /** What the worker reported with `chunk_report`; absent when it made no report. */
+  report?: ChunkReportCall;
+  /** The files the chunk changed since it started, read from git (git-helpers.ts chunkChangedFiles). */
+  changed?: readonly string[];
   /**
    * Unified-diff text of any spec/ changes that landed since the chunk's
    * pre-state. Empty string when nothing changed. The loop runs
@@ -53,7 +48,7 @@ export interface ChunkReviewInput {
 }
 
 /** The judge and what it needs beyond the review's own input. */
-export type ChunkJudgeRun = { judge: ChunkJudge } & Omit<ChunkJudgeInput, "chunk" | "rawReport" | "projectDir" | "signal">;
+export type ChunkJudgeRun = { judge: ChunkJudge } & Omit<ChunkJudgeInput, "chunk" | "claim" | "projectDir" | "signal">;
 
 export interface ChunkReviewOutcome {
   action: ReviewAction;
@@ -84,27 +79,18 @@ const ACTION_RANK: Record<ReviewAction, number> = {
 };
 
 export function runChunkReview(input: ChunkReviewInput): ChunkReviewOutcome {
-  const report = parseChunkReport(input.rawReport);
+  const report = chunkReportOf(input.report, input.changed);
 
   const findings: GateFinding[] = [];
   const collect = (f: GateFinding | null) => { if (f) findings.push(f); };
 
-  // Malformed/missing report short-circuits: the other gates would fire
-  // spuriously on the empty fields (done-when "unmet", tests "missing")
-  // and their halt would outrank the retry. The only meaningful verdict
-  // here is "respawn once and demand the report block".
-  const shapeFinding = gateReportShape(report);
-  if (shapeFinding) {
-    return { action: shapeFinding.action, reasoning: shapeFinding.reasoning, findings: [shapeFinding], report };
-  }
-  collect(gateDoneWhen(input.chunk, report));
+  // The only thing the worker's report decides: its own typed word that it
+  // stopped (gate-done-when.ts). Whether the tests pass, the done-when is met
+  // and the work holds up is measured after this (reviewChunkWork), and a
+  // worker that reported nothing goes straight there.
+  collect(gateDoneWhen(report));
   if (input.specDiff && input.specDiff.trim()) collect(gateAdditiveDiff(input.specDiff));
   collect(gatePhaseGate(input.chunk, input.plan, input.allChunks));
-  collect(gateLaunchReadiness(report));
-  // Whether the chunk's tests pass is measured (gate-build-exec.ts), never read
-  // from the worker's NEW_FAILURES line: "none observed" read as one failing
-  // test set a fix aside before the real tests ran (label-check-sol, 2026-11-25).
-  collect(gateSpecGapJudgment(report));
 
   return verdictFrom(findings, report);
 }
@@ -147,9 +133,8 @@ export function isPhaseGatePause(outcome: Pick<ChunkReviewOutcome, "action" | "f
  * Before the LLM hook, the build-execution gate runs the project's real
  * build/test command and headless-smokes the built artifact. It is the only
  * gate that OBSERVES behavior instead of trusting the agent's report — a
- * chunk that writes `STATUS: done` about a broken build (or a game that
- * renders a blank canvas) is caught here even though every string-based gate
- * passed it. It fires only when the mechanical verdict is already "proceed"
+ * chunk whose worker reports done about a broken build (or a game that
+ * renders a blank canvas) is caught here. It fires only when the mechanical verdict is already "proceed"
  * and can only elevate proceed → push_back or halt (never downgrades a real
  * halt/push_back).
  * Injectable so tests stub the runner instead of spawning a build.
@@ -206,7 +191,13 @@ async function reviewChunkWork(
   // artifact that loads blank, halts regardless of the LLM hook's opinion.
   let execFinding: GateFinding | null = null;
   let structureNote: string | undefined;
-  const owed: OwedOnChunk[] = [];
+  // What the worker said that nobody can settle in the build goes on the
+  // owner's list with the chunk: a question only they can answer, and a
+  // command it says this machine refused though the work was finished.
+  const owed: OwedOnChunk[] = [
+    ...(base.report.ownerQuestion ? [{ check: "owner question", why: `the worker asks the owner: ${base.report.ownerQuestion}` }] : []),
+    ...base.report.machineBlocked.map((b) => ({ check: `refused, by the worker's account: ${b.check}`, why: `the worker says this machine refused \`${b.check}\`: ${b.reason}` })),
+  ];
   try {
     execFinding = await buildExec({
       projectDir: input.projectDir, signal, owedRefusals: owedRefusals(input.ledgerDir),
@@ -273,7 +264,7 @@ async function judgeChunk(
   const { judge, ...ctx } = run;
   let judging: ChunkJudging;
   try {
-    judging = await judge({ ...ctx, chunk: input.chunk, allChunks: input.allChunks, rawReport: input.rawReport, projectDir: input.projectDir, signal });
+    judging = await judge({ ...ctx, chunk: input.chunk, allChunks: input.allChunks, claim: renderChunkReport(passed.report), projectDir: input.projectDir, signal });
   } catch (e) {
     const why = `the chunk judge crashed: ${(e as Error).message}`;
     judging = { scenarios: { status: "not-run", reason: why, scores: [], owed: true }, skeptic: { status: "not-run", finding: why } };

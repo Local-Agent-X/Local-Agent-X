@@ -31,8 +31,13 @@ import { judgeScenario, parseJudgeResponse, type JudgeInput } from "../src/auto-
 import { chooseStepAction, parseStepPlannerResponse } from "../src/auto-build/scenario-scorer/step-planner.js";
 import { defaultJudgmentHook, parseJudgmentResponse } from "../src/auto-build/chunk-review/judgment-hook.js";
 import { consultAdvisor, parseAdvisorResponse, type SystemicHaltPatternSituation } from "../src/auto-build/advisor/index.js";
-import { parseChunkReport } from "../src/auto-build/chunk-review/report-parser.js";
+import { chunkReportOf } from "../src/auto-build/chunk-review/chunk-report.js";
 import type { ParsedChunk } from "../src/auto-build/plan-parser.js";
+
+/** What a worker that finished delivers with chunk_report. */
+const doneCall = (note: string) => ({
+  status: "done" as const, doneWhen: "met" as const, note, specGaps: "", launchReadiness: [], machineBlocked: [], ownerQuestion: "",
+});
 
 const mockLlm = vi.mocked(classifyWithLLM);
 
@@ -156,7 +161,7 @@ describe("judgment hook — schema validation", () => {
   function hookInput() {
     return {
       chunk: hookChunk,
-      report: parseChunkReport("STATUS: done\nCHANGED: page.tsx\nNOTE: ok"),
+      report: chunkReportOf(doneCall("ok"), ["page.tsx"]),
       projectDir: dir,
     };
   }

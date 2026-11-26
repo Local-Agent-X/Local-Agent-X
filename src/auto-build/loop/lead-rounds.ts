@@ -32,6 +32,7 @@ import { safeGet, type EmitFn } from "./types.js";
 import { appendSplitChunks } from "./split-chunks.js";
 import { recordOwed } from "../failure-recovery.js";
 import { refusedCommandCheck } from "../chunk-review/chunk-verdict.js";
+import { renderChunkReport } from "../chunk-review/chunk-report.js";
 
 /** Rounds a chunk may take while its lead keeps it going: a ceiling on cost,
  *  not the rule (the lead stops it sooner, or accepts, or narrows). */
@@ -70,11 +71,6 @@ const NEVER_ACCEPTED = new Set(["build-exec", "chunk-scenarios"]);
 /** Gates a chunk lands past only with the gap on record: owed to the owner, or the check overruled. */
 const LANDS_ONLY_ON_RECORD = new Set(["chunk-unjudged", "build-refused"]);
 
-function workerReport(o: ChunkReviewOutcome): string {
-  const r = o.report;
-  return `STATUS: ${r.status}\nDONE_WHEN: ${r.doneWhen}\nNOTE: ${r.note || "(empty)"}\nSPEC_GAPS: ${r.specGaps || "(empty)"}`;
-}
-
 async function record(projectDir: string, chunk: ParsedChunk, text: string): Promise<void> {
   const amended = await applyAdditiveSpecAmendment(projectDir, chunk, text);
   if (amended.ok) await safeGet(() => commitSpecAmendment(projectDir, chunk));
@@ -85,7 +81,7 @@ export async function planLeadRound(a: LeadRoundInput): Promise<LeadRoundPlan | 
   const { chunk, outcome } = a;
   const decision: LeadDecision | null = await (a.ask ?? askLead)(a.lead, {
     chunk: { number: chunk.number, title: chunk.title, slice: chunk.slice, doneWhen: chunk.doneWhen, scenarios: chunk.scenarios },
-    totalChunks: a.totalChunks, round: a.round, finding: outcome.reasoning, workerReport: workerReport(outcome),
+    totalChunks: a.totalChunks, round: a.round, finding: outcome.reasoning, workerReport: renderChunkReport(outcome.report),
     earlier: a.earlier, repeated: a.repeated, maxRounds: MAX_LEAD_ROUNDS, ...(a.final ? { final: true } : {}),
   }, { signal: a.signal });
   if (!decision) {

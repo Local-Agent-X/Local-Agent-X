@@ -52,7 +52,6 @@ vi.mock("../src/canonical-loop/public/static-smoke-origin.js", async (importOrig
   return { ...actual, startStaticSmokeOrigin: async (...a: Parameters<typeof actual.startStaticSmokeOrigin>) => (seam.smokeOrigin ? seam.smokeOrigin() : actual.startStaticSmokeOrigin(...a)) };
 });
 
-const CLEAN = "STATUS: done\nDONE_WHEN: met\nCHANGED: src\nTESTS: n/a\nSPEC_GAPS: none\nLAUNCH_READINESS: none\nNOTE: done.";
 vi.mock("../src/auto-build/agents/chunk-runner.js", () => ({
   SKEPTIC_PROBE_DIR: ".skeptic",
   runChunkAgent: vi.fn(async (o: { projectDir: string }) => {
@@ -61,7 +60,7 @@ vi.mock("../src/auto-build/agents/chunk-runner.js", () => ({
     seam.workerCalls++;
     fs.mkdirSync(path.join(o.projectDir, "src"), { recursive: true });
     fs.writeFileSync(path.join(o.projectDir, "src", `work-${seam.workerCalls}.ts`), "export {};\n");
-    return { stdout: CLEAN, exitCode: 0, durationMs: 1 };
+    return { stdout: "", exitCode: 0, durationMs: 1, chunkReport: { status: "done" as const, doneWhen: "met" as const, note: "done.", specGaps: "", launchReadiness: [], machineBlocked: [], ownerQuestion: "" } };
   }),
 }));
 vi.mock("../src/auto-build/advisor/index.js", () => ({ consultAdvisor: vi.fn(async () => null) }));

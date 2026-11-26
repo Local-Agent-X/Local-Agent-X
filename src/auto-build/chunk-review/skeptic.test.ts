@@ -1,5 +1,5 @@
-// The chunk skeptic: its verdict parse (default to broken), its process-failure
-// direction (not-run, never broken), and what its brief hands it.
+// The chunk skeptic: how the verdict it delivers is read, what a skeptic that
+// delivered none counts as (not-run, never broken), and what its brief hands it.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -8,10 +8,13 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { FINISH_FIX_BREAK_GROUNDS, SKEPTIC_BAR_BLOCK, SKEPTIC_BREAK_GROUNDS, SKEPTIC_RULE_REACH, finishFixLeavesAppNoWorse } from "./skeptic-bar.js";
 
+type Verdict = { verdict: "holds" | "broken"; ground: string; finding: string; followUps: string[] };
+type AgentResult = { stdout: string; exitCode: number; durationMs: number; error?: string; skepticVerdict?: Verdict };
+
 const agent = vi.hoisted(() => ({
-  result: { stdout: "", exitCode: 0, durationMs: 1 } as { stdout: string; exitCode: number; durationMs: number; error?: string },
+  result: { stdout: "", exitCode: 0, durationMs: 1 } as AgentResult,
   /** Answers for successive calls, before `result` takes over. */
-  queue: [] as Array<{ stdout: string; exitCode: number; durationMs: number; error?: string }>,
+  queue: [] as AgentResult[],
   calls: [] as Array<{ role: string; task: string; projectDir?: string }>,
   /** What the skeptic does in the project while it runs (writes a probe). */
   during: undefined as ((projectDir: string) => void) | undefined,
@@ -26,7 +29,11 @@ vi.mock("../agents/chunk-runner.js", () => ({
   }),
 }));
 
-const { buildSkepticTask, parseSkepticVerdict, runChunkSkeptic } = await import("./skeptic.js");
+const { buildSkepticTask, skepticVerdictOf, runChunkSkeptic } = await import("./skeptic.js");
+
+const holds = (finding: string, followUps: string[] = []): Verdict => ({ verdict: "holds", ground: "", finding, followUps });
+const broken = (ground: string, finding: string, followUps: string[] = []): Verdict => ({ verdict: "broken", ground, finding, followUps });
+const delivered = (skepticVerdict: Verdict): AgentResult => ({ stdout: "", exitCode: 0, durationMs: 1, skepticVerdict });
 const { parsePlanText } = await import("../plan-parser.js");
 
 const chunk = parsePlanText([
@@ -46,75 +53,37 @@ beforeEach(() => {
   agent.result = { stdout: "", exitCode: 0, durationMs: 1 };
 });
 
-describe("parseSkepticVerdict", () => {
-  it("reads HOLDS and BROKEN with their findings", () => {
-    expect(parseSkepticVerdict("I ran the tests.\nVERDICT: HOLDS\nFINDING: tried DST and empty input.")).toEqual({
-      status: "holds", finding: "tried DST and empty input.",
+describe("skepticVerdictOf", () => {
+  it("reads a holds verdict as its finding", () => {
+    expect(skepticVerdictOf(holds("tried DST and empty input."))).toEqual({ status: "holds", finding: "tried DST and empty input." });
+  });
+
+  it("a broken finding leads with the ground it names, and keeps the ground", () => {
+    const ground = 'spec/plan.md, chunk 3 done-when: "a booked slot disappears from the list"';
+    const v = skepticVerdictOf(broken(ground, "the slot is still listed after booking (src/book.ts:41); shown by a probe."));
+    expect(v).toEqual({
+      status: "broken",
+      finding: `Breaks: ${ground}\nthe slot is still listed after booking (src/book.ts:41); shown by a probe.`,
+      ground,
     });
-    const broken = parseSkepticVerdict("VERDICT: BROKEN\nFINDING: booking twice double-books (src/book.ts:41);\nshown by a two-request probe.");
-    expect(broken.status).toBe("broken");
-    expect(broken.finding).toContain("src/book.ts:41");
-    expect(broken.finding).toContain("two-request probe");
-  });
-
-  it("takes the last verdict line, so a quoted format does not decide it", () => {
-    const raw = "The format is VERDICT: BROKEN | HOLDS.\nVERDICT: HOLDS\nFINDING: survived.";
-    expect(parseSkepticVerdict(raw).status).toBe("holds");
-  });
-
-  it("tolerates bold markers and lower case", () => {
-    expect(parseSkepticVerdict("**VERDICT:** broken\n**FINDING:** x").status).toBe("broken");
-  });
-
-  it("a BROKEN finding leads with the ground it names", () => {
-    const v = parseSkepticVerdict([
-      "VERDICT: BROKEN",
-      'GROUND: spec/plan.md, chunk 3 done-when: "a booked slot disappears from the list"',
-      "FINDING: the slot is still listed after booking (src/book.ts:41); shown by a probe.",
-      "FOLLOW_UPS: none",
-    ].join("\n"));
-    expect(v.status).toBe("broken");
-    expect(v.finding).toBe(
-      'Breaks: spec/plan.md, chunk 3 done-when: "a booked slot disappears from the list"\n' +
-      "the slot is still listed after booking (src/book.ts:41); shown by a probe.",
-    );
-    expect(v.followUps).toBeUndefined();
   });
 
   // What the skeptic found beyond the contract is listed apart from the
   // finding, so it can be recorded without holding the chunk back.
-  it("reads follow-ups apart from the finding, on HOLDS and on BROKEN", () => {
-    const holds = parseSkepticVerdict([
-      "VERDICT: HOLDS",
-      "FINDING: tried double booking, DST and an empty name.",
-      "FOLLOW_UPS:",
-      "- a slot name of 300 characters overflows the row; the spec names no length.",
-      "- no test for a slot booked at midnight.",
-    ].join("\n"));
-    expect(holds).toEqual({
-      status: "holds",
-      finding: "tried double booking, DST and an empty name.",
-      followUps: [
-        "a slot name of 300 characters overflows the row; the spec names no length.",
-        "no test for a slot booked at midnight.",
-      ],
+  it("keeps follow-ups apart from the finding, on holds and on broken", () => {
+    const followUps = ["a slot name of 300 characters overflows the row; the spec names no length.", "no test for a slot booked at midnight."];
+    expect(skepticVerdictOf(holds("tried double booking, DST and an empty name.", followUps))).toEqual({
+      status: "holds", finding: "tried double booking, DST and an empty name.", followUps,
     });
-    const broken = parseSkepticVerdict("VERDICT: BROKEN\nGROUND: crash\nFINDING: throws on an empty list.\n**FOLLOW-UPS:** - long names overflow");
-    expect(broken.finding).toBe("Breaks: crash\nthrows on an empty list.");
-    expect(broken.followUps).toEqual(["long names overflow"]);
-  });
-
-  it("no verdict line is broken: it has not shown the change holds", () => {
-    const v = parseSkepticVerdict("Looks fine to me overall.");
-    expect(v.status).toBe("broken");
-    expect(v.finding).toContain("no VERDICT line");
-    expect(v.finding).toContain("Looks fine");
+    const v = skepticVerdictOf(broken("crash", "throws on an empty list.", ["long names overflow"]));
+    expect(v.finding).toBe("Breaks: crash\nthrows on an empty list.");
+    expect(v.followUps).toEqual(["long names overflow"]);
   });
 });
 
 describe("buildSkepticTask", () => {
   it("carries the contract, the claim and the sha the diff starts from", () => {
-    const task = buildSkepticTask({ chunk, rawReport: "STATUS: done\nNOTE: all good", preSha: "abc1234" });
+    const task = buildSkepticTask({ chunk, claim: "STATUS: done\nNOTE: all good", preSha: "abc1234" });
     expect(task).toContain("a visitor books a slot");
     expect(task).toContain("a booked slot disappears from the list");
     expect(task).toContain("STATUS: done");
@@ -140,7 +109,7 @@ describe("buildSkepticTask for a finish fix", () => {
       { persona: "unlucky", status: "ran", findings: [{ severity: "high", text: "a cancelled edit overwrites the saved medication" }] },
     ] as never);
     for (const c of [fix, splitHeading("Split from chunk 1012 — Finish fix 1: unlucky findings")]) {
-      const task = buildSkepticTask({ chunk: c, rawReport: "STATUS: done", preSha: "abc1234" });
+      const task = buildSkepticTask({ chunk: c, claim: "STATUS: done", preSha: "abc1234" });
       expect(task).toContain("## This is a finish fix");
       for (const ground of FINISH_FIX_BREAK_GROUNDS) expect(task).toContain(ground);
       expect(task).toMatch(/already in the app before this chunk/);
@@ -151,7 +120,7 @@ describe("buildSkepticTask for a finish fix", () => {
 
   it("leaves a plan chunk, and a plan chunk's split part numbered past 1000, on the contract bar", () => {
     for (const c of [chunk, splitHeading("Split from chunk 10 — Native scan")]) {
-      const task = buildSkepticTask({ chunk: c, rawReport: "STATUS: done", preSha: "abc1234" });
+      const task = buildSkepticTask({ chunk: c, claim: "STATUS: done", preSha: "abc1234" });
       expect(task).not.toContain("## This is a finish fix");
       expect(task).toMatch(/Prove it wrong against the contract above/);
     }
@@ -164,12 +133,12 @@ describe("buildSkepticTask for a finish fix", () => {
   // A fix out of rounds lands what it fixed only when what is left cannot have
   // made the app worse (loop/handle-push-back.ts); the number says which.
   it("asks the ground's number, keeps it on the verdict, and reads 1 and 2 as no worse", () => {
-    const task = buildSkepticTask({ chunk: { ...chunk, number: 1012, phase: "Finish" }, rawReport: "STATUS: done", preSha: "abc" });
+    const task = buildSkepticTask({ chunk: { ...chunk, number: 1012, phase: "Finish" }, claim: "STATUS: done", preSha: "abc" });
     expect(task).toContain(`1. ${FINISH_FIX_BREAK_GROUNDS[0]}`);
-    expect(task).toContain("start the GROUND line with the number");
-    const v = parseSkepticVerdict("VERDICT: BROKEN\nGROUND: 2 — its test passes without the fix\nFINDING: x");
+    expect(task).toContain("start `ground` with the number");
+    const v = skepticVerdictOf(broken("2 — its test passes without the fix", "x"));
     expect(v.ground).toBe("2 — its test passes without the fix");
-    expect(finishFixLeavesAppNoWorse(parseSkepticVerdict("VERDICT: BROKEN\nGROUND: **1** — still reproduces").ground)).toBe(true);
+    expect(finishFixLeavesAppNoWorse(skepticVerdictOf(broken("**1** — still reproduces", "x")).ground)).toBe(true);
     expect([v.ground, "1 — still reproduces", "3 — broke saving", "4 — loses data", "the fix is incomplete", undefined].map(finishFixLeavesAppNoWorse))
       .toEqual([true, true, false, false, false, false]);
   });
@@ -216,17 +185,18 @@ describe("the skeptic's bar", () => {
 });
 
 describe("runChunkSkeptic", () => {
-  it("runs the chunk-skeptic role in the chunk's tree and parses its answer", async () => {
-    agent.result = { stdout: "VERDICT: BROKEN\nFINDING: empty name accepted.", exitCode: 0, durationMs: 1 };
-    const v = await runChunkSkeptic({ chunk, rawReport: "STATUS: done", preSha: "abc", projectDir: "/proj/wt" });
-    expect(v).toEqual({ status: "broken", finding: "empty name accepted." });
+  it("runs the chunk-skeptic role in the chunk's tree and reads the verdict it delivered", async () => {
+    agent.result = delivered(broken("the done-when", "empty name accepted."));
+    const v = await runChunkSkeptic({ chunk, claim: "STATUS: done", preSha: "abc", projectDir: "/proj/wt" });
+    expect(v).toEqual({ status: "broken", finding: "Breaks: the done-when\nempty name accepted.", ground: "the done-when" });
     expect(agent.calls[0].role).toBe("chunk-skeptic");
     expect(agent.calls[0].projectDir).toBe("/proj/wt");
+    expect(agent.calls[0].task).toContain("End by calling skeptic_verdict.");
   });
 
   it("a skeptic that never answered is not-run, not broken", async () => {
     agent.result = { stdout: "", exitCode: 124, durationMs: 1, error: "timed out" };
-    const v = await runChunkSkeptic({ chunk, rawReport: "", preSha: "abc", projectDir: "/proj" });
+    const v = await runChunkSkeptic({ chunk, claim: "", preSha: "abc", projectDir: "/proj" });
     expect(v.status).toBe("not-run");
     expect(v.finding).toContain("timed out");
     expect(agent.calls).toHaveLength(2);
@@ -234,18 +204,29 @@ describe("runChunkSkeptic", () => {
 
   // 2026-11-25: the skeptic's model stream died after a few reads and its turn
   // ended with nothing said; read as BROKEN, it cost a fix round on nothing.
-  it("a turn that ended without a word is not-run, and the skeptic is asked again", async () => {
+  it("a turn that ended with no verdict is not-run, and the skeptic is asked again", async () => {
     agent.queue.push({ stdout: "  \n", exitCode: 0, durationMs: 1 });
-    agent.result = { stdout: "VERDICT: HOLDS\nFINDING: ran the probes.", exitCode: 0, durationMs: 1 };
-    const v = await runChunkSkeptic({ chunk, rawReport: "", preSha: "abc", projectDir: "/proj" });
+    agent.result = delivered(holds("ran the probes."));
+    const v = await runChunkSkeptic({ chunk, claim: "", preSha: "abc", projectDir: "/proj" });
     expect(v).toEqual({ status: "holds", finding: "ran the probes." });
     expect(agent.calls).toHaveLength(2);
   });
 
-  it("an answer without a verdict line is still broken, and not asked again", async () => {
-    agent.result = { stdout: "I looked around and it seems fine.", exitCode: 0, durationMs: 1 };
-    const v = await runChunkSkeptic({ chunk, rawReport: "", preSha: "abc", projectDir: "/proj" });
-    expect(v.status).toBe("broken");
+  // Whatever it typed, only the verdict it delivered counts: words that look
+  // like a verdict decide nothing, in either direction.
+  it("an answer in words with no verdict delivered is not-run both times, never broken or holds", async () => {
+    agent.result = { stdout: "I looked around and it seems fine.\nVERDICT: HOLDS\nVERDICT: BROKEN", exitCode: 0, durationMs: 1 };
+    const v = await runChunkSkeptic({ chunk, claim: "", preSha: "abc", projectDir: "/proj" });
+    expect(v.status).toBe("not-run");
+    expect(v.finding).toContain("without giving a verdict");
+    expect(agent.calls).toHaveLength(2);
+  });
+
+  // A verdict delivered before the run was cut off is still the verdict.
+  it("a verdict it delivered stands though its run then failed", async () => {
+    agent.result = { ...delivered(holds("ran the probes.")), exitCode: 124, error: "timed out" };
+    const v = await runChunkSkeptic({ chunk, claim: "", preSha: "abc", projectDir: "/proj" });
+    expect(v.status).toBe("holds");
     expect(agent.calls).toHaveLength(1);
   });
 
@@ -254,14 +235,14 @@ describe("runChunkSkeptic", () => {
   it("deletes the probe folder it wrote in, and leaves one the project already had", async () => {
     const project = mkdtempSync(join(tmpdir(), "lax-skeptic-probes-"));
     try {
-      agent.result = { stdout: "VERDICT: HOLDS\nFINDING: ran 3 probes.", exitCode: 0, durationMs: 1 };
+      agent.result = delivered(holds("ran 3 probes."));
       agent.during = (dir) => { mkdirSync(join(dir, ".skeptic"), { recursive: true }); writeFileSync(join(dir, ".skeptic", "probe.test.ts"), "it('x', () => {});"); };
-      await runChunkSkeptic({ chunk, rawReport: "", preSha: "abc", projectDir: project });
+      await runChunkSkeptic({ chunk, claim: "", preSha: "abc", projectDir: project });
       expect(existsSync(join(project, ".skeptic"))).toBe(false);
 
       mkdirSync(join(project, ".skeptic"));
       writeFileSync(join(project, ".skeptic", "theirs.txt"), "the project's own");
-      await runChunkSkeptic({ chunk, rawReport: "", preSha: "abc", projectDir: project });
+      await runChunkSkeptic({ chunk, claim: "", preSha: "abc", projectDir: project });
       expect(existsSync(join(project, ".skeptic", "theirs.txt"))).toBe(true);
     } finally {
       agent.during = undefined;

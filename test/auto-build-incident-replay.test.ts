@@ -40,13 +40,13 @@ vi.mock("../src/auto-build/loop/run-chunk-once.js", () => ({
   runChunkOnce: vi.fn(async (opts: { chunk: { number: number; footprint?: string[] }; projectDir: string }) => {
     const fs = await import("node:fs");
     const path = await import("node:path");
-    const { parseChunkReport } = await import("../src/auto-build/chunk-review/report-parser.js");
+    const { chunkReportOf } = await import("../src/auto-build/chunk-review/chunk-report.js");
     const n = opts.chunk.number;
     script.builds.push(n);
     const file = opts.chunk.footprint?.[0] ?? `f${n}.txt`;
     fs.writeFileSync(path.join(opts.projectDir, file), `${n}.attempt${script.builds.filter((b) => b === n).length}`);
     const next = script.outcomes.get(n)?.shift() ?? { action: "proceed", reasoning: "green", findings: [] };
-    return { ...next, report: { ...parseChunkReport(""), status: "done", doneWhen: "met", changed: [file] } };
+    return { ...next, report: chunkReportOf({ status: "done", doneWhen: "met", note: "", specGaps: "", launchReadiness: [], machineBlocked: [], ownerQuestion: "" }, [file]) };
   }),
   chunkProcessFailureOutcome: vi.fn(() => null),
 }));

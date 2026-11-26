@@ -1,85 +1,58 @@
 ---
 name: chunk-review
-description: Evaluate a just-completed build chunk against its done-when, classify spec drift, decide whether to proceed/amend/push-back/halt. Tool-only — invoked by the run_build_plan loop, not by users directly.
+description: Review a just-built chunk and decide proceed / amend_spec / push_back / halt. Internal to the build engine; not invoked by users.
 user-invocable: false
 ---
 
 # /chunk-review
 
-Internal skill invoked by `run_build_plan` after each chunk subprocess returns. Its single job is to decide one of four actions:
+What the build loop runs after each chunk's worker returns. It decides one of four actions:
 
-- **proceed** — chunk shipped clean; commit + advance
-- **amend_spec** — chunk surfaced a missing constraint the spec should encode; apply an **additive** spec edit, commit it separately, advance
-- **push_back** — chunk's done-when isn't met but the gap is mechanical; respawn the same chunk subprocess once with the reviewer's reasoning appended
-- **halt** — surface to the user; auto-recovery is unsafe
+- **proceed** — the chunk lands; commit and advance.
+- **amend_spec** — the chunk surfaced a constraint the spec should state; apply an **additive** spec edit, commit it apart, advance.
+- **push_back** — the work is not finished or does not hold; it goes to the build's lead (or the push-back advisor when the build has none), who sends it back to a worker, lands it with a check owed, or parks it for the owner.
+- **halt** — stop the build; auto-recovery is unsafe.
 
-## The seven gate checks
+## The rule
 
-The discipline this skill encodes was distilled from the Bookwell manual reference build (May 2026), where review repeatedly caught silent deferrals, Constitution gray areas, and missing implicit constraints. The gates are mechanical because mechanical is auditable; LLM judgment can layer on top for fuzzy cases.
+**Code acts only on what it measured or on a typed field. Nothing parses prose a model wrote.**
 
-### 1. Report-shape gate
+The worker, the skeptic and the break-it agents each end their run by calling a report tool (`agents/report-tools.ts`: `chunk_report`, `skeptic_verdict`, `breaker_findings`). The tool checks the arguments when it is called, so the model can correct them. An agent that ends without calling its tool has not reported; that is never read as a failure of the work.
 
-The subprocess prompt mandates an exact STATUS / DONE_WHEN / CHANGED / TESTS / NEW_FAILURES / PRE_EXISTING_FAILURES / SPEC_GAPS / LAUNCH_READINESS / NOTE block at the end of its reply. If the report doesn't parse to that shape, **halt** — the subprocess either timed out mid-report or freelanced its output. Either way, don't commit.
+Until 2026-11-26 the reports were text blocks read with regexes, and every phrasing a model reached for was a new bug: `NEW_FAILURES: none observed` read as a failing test, a skeptic's answer with no `VERDICT` line read as BROKEN, a launch-readiness item held a chunk for sounding vague.
 
-### 2. Done-when verifier
+## What the worker's report decides
 
-Confirm the agent actually met the chunk's done-when. Failure shapes that halt:
+Only its own typed word that it stopped (`gate-done-when.ts`): `status` blocked or partial, or `done_when` unmet. That is a claim, so it goes to whoever judges claims (the lead, or the advisor). Never a halt from the gate.
 
-- `STATUS != done` — chunk explicitly didn't ship
-- `DONE_WHEN: unmet | unknown` — agent admits it didn't meet the contract
-- `DONE_WHEN: deferred-to-launch-readiness` **when the plan's done-when names a mechanical verification** (integration test, unit test, asserts X) — the chunk-6 silent-deferral pattern: agent reframes a chunk-local correctness contract as a launch-time concern. Halt.
-- `DONE_WHEN: met` but the NOTE prose contains a contradictory phrase ("deferred to launch-readiness", "didn't run the test", "wasn't able to run", "skipped"). The structured field is too optimistic; the prose tells the truth. Halt.
+- `machine_blocked` beside a stopped status takes the road of a refusal the build check saw itself (`build-refused`): the lead decides owed or park; no worker is sent to fix a machine.
+- `machine_blocked` or `owner_question` beside a finished status does not hold the chunk: it lands, and the item goes on the owner's ledger of owed checks.
+- A worker that made **no report** is not sent back for it. Its work goes straight to the measured checks.
+- The files a chunk changed are read from git, never taken from the report.
 
-### 3. Additive-diff check — **most important**
+How a note is worded decides nothing. Whether the done-when is met is what the held-out scenarios and the skeptic judge.
 
-Spec amendments proposed by the review pass (or by the loop in response to a review finding) must **never** weaken constraints. The reviewer parses any `git diff -- spec/` since the chunk's pre-state and classifies each removed line as:
+## The checks, in order
 
-- **Replaced-with-stricter-equivalent** — a nearby addition restates the constraint more strictly (contains "must", "required", "always", "forbidden", ≥/≤, "fails when", "enforces", or reads as a near-superset of the removed text). Acceptable.
-- **Weakened** — no stricter replacement. **Halt.** Surface the offending line to the user.
+1. **The worker's own word that it stopped** (above).
+2. **Additive-diff check — the most important.** A `git diff -- spec/` since the chunk started must never weaken a constraint. Each removed line is either *replaced by a stricter equivalent* nearby (acceptable) or *weakened* (halt, naming the line). A false positive is recoverable; silently weakening the spec to match buggy code is not.
+3. **Phase-gate detector.** The last chunk of a phase the plan's "Phase verification gates" section names pauses at that gate after it is accepted. The chunk is still built, tested and judged like any other.
+4. **Build check** (`gate-build-exec.ts`). Runs the project's real build and tests and reads exit codes, then loads a static entry headless. Three results: passed, failed (the only one that reaches a worker), and could not run on this machine (owed to the owner, never a fix round). A command that ran and failed with a machine refusal in its output is `build-refused` and goes to the lead.
+5. **Chunk judge** (`chunk-judge.ts`). The chunk's held-out scenarios, and a skeptic that tries to break the change against its contract. A skeptic that gave no verdict is asked once more, then owed.
+6. **Spec-gap judgment hook** (`judgment-hook.ts`). A model reads the changed files against the constitution and can raise proceed to amend_spec. It never lowers a verdict.
 
-False positives on this gate are recoverable (the user authorizes). False negatives (silently weakening spec to match buggy code) are not — that's the entire failure mode this gate exists to prevent.
+Checks 4 to 6 run only when 1 to 3 let the chunk through. When a review sends a chunk back before its judge ran, the outcome says so (`chunk-unjudged`), and the lead can land that work only with the judging owed or the stopping check overruled.
 
-### 4. Phase-gate detector
+## Priority
 
-If the just-completed chunk is the **last in its phase** AND the plan's "Phase verification gates" section references that phase by short label (e.g. "Phase D"), halt with a "drive scenarios at $URL, score satisfaction, then resume" message. Don't try to score scenarios autonomously — that's a human task.
+When several checks fire, the strongest wins: **halt > push_back > amend_spec > proceed**.
 
-### 5. Launch-readiness emitter
+## What this module does not do
 
-Launch-readiness items are valid and expected. They don't halt **unless** the item lacks a concrete verify step. Each item must name how to verify it before launch — "set X env, run Y test, assert Z" — not just "test in staging." Vague items halt with a request to sharpen.
+- Decide what happens to a pushed-back chunk: `loop/handle-push-back.ts` and the lead.
+- Apply spec edits or run git: the loop owns git state.
+- Keep the ledger of owed checks: `failure-recovery.ts`. The review only lists what it could not check on its outcome.
 
-Concrete items get appended to `LAUNCH_READINESS.md` by the loop (chunk 7 of the tool build). The review skill itself just enforces the concreteness contract.
+## Tests
 
-### 6. Test-failure escalation
-
-Whether the chunk's tests pass is measured: the build check (`gate-build-exec.ts`) runs the project's real build and tests and reads the exit code. The worker's own `NEW_FAILURES` / `PRE_EXISTING_FAILURES` lines hold nothing back.
-
-### 7. Spec-gap judgment (auxiliary)
-
-Catches the chunk-10 pattern (agent surfaces a Constitution gray area as "two options, you decide") and constitution-tagged ambiguity. If the NOTE body:
-
-- Surfaces a fork ("two options", "your call", "user decides") — halt; auto-deciding violates the discipline.
-- References a Constitution rule + leaves it as a gray area / silent fallback / theoretical concern — halt; resolve it (fix code or amend spec) before proceeding.
-
-The chunk-12 pattern (agent doesn't surface a gap, but the reviewer recognizes an implicit-spec violation by reading the constitution and slice) is harder — it requires LLM judgment over the chunk's CHANGED files and the spec's constitution. The loop can wire an external judgment hook here when one is available; the mechanical gate by itself doesn't catch chunk-12.
-
-## Priority order
-
-When multiple gates fire, the strongest action wins: **halt > push_back > amend_spec > proceed**.
-
-## What this skill explicitly does NOT do
-
-- Decide whether to retry a halt automatically — that's the loop's failure-recovery harness (chunk 9).
-- Apply spec edits — the loop applies edits after the review returns `amend_spec` with a `specDiff`.
-- Run git commands — the loop owns git state; the review is a pure function over `(chunk, plan, rawReport, specDiff)`.
-- Score scenarios — humans score scenarios; phase-gate halts surface the scenario list and stop.
-
-## Fixtures the gate logic is tested against
-
-From a recorded reference build:
-
-- **chunk-6** — silent Google-integration deferral → expects `halt`
-- **chunk-10** — Constitution #8 gray area surfaced as "two options" → expects `halt`
-- **chunk-12** — missing stale-data warning (additive-only spec amendment) → expects `amend_spec` (requires LLM judgment hook or pre-supplied SPEC_GAPS)
-- **clean-proceed** — synthetic clean ship → expects `proceed`
-
-These live under `test/fixtures/auto-build-chunk-review/`.
+`test/auto-build-chunk-review.test.ts` (the review's own checks on typed reports), `chunk-judge.test.ts`, `skeptic.test.ts`, `test/auto-build-machine-refusals.test.ts` (every check site against captured refusals).

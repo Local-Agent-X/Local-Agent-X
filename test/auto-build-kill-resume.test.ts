@@ -39,8 +39,6 @@ vi.hoisted(() => {
 /** How many times a scripted model has been asked: part of what makes two moments of a run differ. */
 const script = vi.hoisted(() => ({ calls: 0 }));
 
-const CLEAN = "STATUS: done\nDONE_WHEN: met\nCHANGED: src\nTESTS: n/a\nSPEC_GAPS: none\nLAUNCH_READINESS: none\nNOTE: done.";
-
 // The scripted models: a worker writes its chunk's one file, the skeptic
 // passes, and the "hostile" break-it agent finds one thing until the fix's
 // file is on the project.
@@ -50,7 +48,9 @@ vi.mock("../src/auto-build/agents/chunk-runner.js", async () => {
   return {
     SKEPTIC_PROBE_DIR: ".skeptic",
     runChunkAgent: vi.fn(async (o: { role: string; title?: string; task: string; projectDir: string; signal?: AbortSignal }) => {
-      const done = (stdout: string) => ({ stdout, exitCode: 0, durationMs: 1 });
+      // Each agent ends by calling its report tool; what it delivered comes
+      // back beside its (empty) last words.
+      const ran = { stdout: "", exitCode: 0, durationMs: 1 };
       const title = o.title ?? "";
       script.calls++;
       // A stop cuts a running agent off (exit 130, as runChunkAgent reports an
@@ -62,10 +62,10 @@ vi.mock("../src/auto-build/agents/chunk-runner.js", async () => {
         }
         return { stdout: "", exitCode: 130, durationMs: 1 };
       }
-      if (o.role === "chunk-skeptic") return done("VERDICT: HOLDS\nFINDING: probed the edges.\nFOLLOW_UPS: none");
+      if (o.role === "chunk-skeptic") return { ...ran, skepticVerdict: { verdict: "holds" as const, ground: "", finding: "probed the edges.", followUps: [] } };
       if (o.role === "finish-breaker") {
         const fixed = fs.existsSync(path.join(o.projectDir, "src", "fix.txt"));
-        return done(/hostile/.test(title) && !fixed ? "FINDINGS:\n- [high] the list drops its last item" : "FINDINGS: none");
+        return { ...ran, breakerFindings: { findings: /hostile/.test(title) && !fixed ? [{ severity: "high" as const, text: "the list drops its last item" }] : [] } };
       }
       const fix = /^Finish fix/.test(title);
       const n = Number(title.match(/Chunk (\d+)\//)?.[1] ?? o.task.match(/Chunk (\d+)/)?.[1]);
@@ -73,7 +73,7 @@ vi.mock("../src/auto-build/agents/chunk-runner.js", async () => {
       fs.writeFileSync(path.join(o.projectDir, "src", fix ? "fix.txt" : `c${n}.txt`), fix ? "fixed\n" : `chunk ${n}\n`);
       // A worker that goes on from a cut-off attempt finishes what that one left.
       fs.rmSync(path.join(o.projectDir, "src", "half-written.txt"), { force: true });
-      return done(CLEAN);
+      return { ...ran, chunkReport: { status: "done" as const, doneWhen: "met" as const, note: "done.", specGaps: "", launchReadiness: [], machineBlocked: [], ownerQuestion: "" } };
     }),
   };
 });

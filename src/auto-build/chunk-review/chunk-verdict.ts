@@ -13,8 +13,8 @@ import type { OwedCheck } from "../failure-recovery.js";
 
 export interface ChunkJudgeInput {
   chunk: ParsedChunk;
-  /** The builder's final report, verbatim: the skeptic's claim under attack. */
-  rawReport: string;
+  /** What the builder reported, in a few lines (chunk-report.ts renderChunkReport): the skeptic's claim under attack. */
+  claim: string;
   /** HEAD before the chunk was built. */
   preSha: string;
   /** Every chunk of the plan: a scenario named by several is judged at the

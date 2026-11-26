@@ -41,6 +41,7 @@ import type { ChunkJudge } from "../chunk-review/chunk-verdict.js";
 import type { BuildLeadRef } from "../advisor/lead-chat.js";
 import { MAX_LEAD_ROUNDS, planLeadRound, type LeadRoundPlan } from "./lead-rounds.js";
 import { landsWhatItFixed } from "../finish-gates/fix-chunk.js";
+import { renderChunkReport } from "../chunk-review/chunk-report.js";
 
 /** Rebuilds a pushed-back chunk gets after its first attempt. */
 export const MAX_FIX_ROUNDS = 3;
@@ -130,10 +131,7 @@ async function planRound(opts: HandlePushBackOptions, round: Round): Promise<Rou
     kind: "chunk-review-push-back",
     chunk,
     reviewReason: outcome.reasoning,
-    workerReport:
-      `NOTE: ${outcome.report.note || "(empty)"}\n` +
-      `SPEC_GAPS: ${outcome.report.specGaps || "(empty)"}\n` +
-      `DONE_WHEN: ${outcome.report.doneWhen}`,
+    workerReport: renderChunkReport(outcome.report),
     projectDir: opts.projectDir,
   }, { signal: opts.signal });
 

@@ -15,10 +15,10 @@ import { join } from "node:path";
 import { runPreflightProbe, PREFLIGHT_FILES } from "../src/auto-build/loop/preflight.js";
 import type { ChunkAgentInvocation, ChunkAgentResult } from "../src/auto-build/agents/chunk-runner.js";
 
-const REPORT = (note: string) =>
-  `STATUS: done\nDONE_WHEN: met\nCHANGED: ${PREFLIGHT_FILES.echo}, ${PREFLIGHT_FILES.bash}\n` +
-  `TESTS: n/a\nNEW_FAILURES: none\nPRE_EXISTING_FAILURES: none\nSPEC_GAPS: none\n` +
-  `LAUNCH_READINESS: none\nNOTE: preflight token ${note}`;
+/** What the probe's worker delivers with chunk_report. */
+const REPORT = (note: string): NonNullable<ChunkAgentResult["chunkReport"]> => ({
+  status: "done", doneWhen: "met", note: `preflight token ${note}`, specGaps: "", launchReadiness: [], machineBlocked: [], ownerQuestion: "",
+});
 
 function ok(result: Partial<ChunkAgentResult> = {}): ChunkAgentResult {
   return { stdout: "", exitCode: 0, durationMs: 10, ...result };
@@ -44,7 +44,7 @@ describe("runPreflightProbe", () => {
       const t = token();
       writeFileSync(join(dir, PREFLIGHT_FILES.echo), t);
       writeFileSync(join(dir, PREFLIGHT_FILES.bash), t);
-      return ok({ stdout: REPORT(t) });
+      return ok({ chunkReport: REPORT(t) });
     });
     expect(r.status).toBe("pass");
     // The task hands the worker a forward-slash root — the backslash-loss class.
@@ -68,11 +68,12 @@ describe("runPreflightProbe", () => {
     expect(r).toMatchObject({ status: "fail", contract: "worker-timeout" });
   });
 
-  it("passes with a warning when the environment round-trips but the report block is missing", async () => {
+  it("passes with a warning when the environment round-trips but the worker made no report", async () => {
     // A worker that did the work but ended on prose (grok derailed by task
     // errors, 2026-07-02) must NOT halt the build: the environment — the thing
-    // preflight verifies — is provably sound, and report discipline has its own
-    // per-chunk retry gate. Halting here was a live false-halt.
+    // preflight verifies — is provably sound, and a chunk whose worker makes
+    // no report is still built, tested and reviewed. Halting here was a live
+    // false-halt.
     const r = await runPreflightProbe({ projectDir: dir }, async () => {
       const t = token();
       writeFileSync(join(dir, PREFLIGHT_FILES.echo), t);
@@ -80,26 +81,26 @@ describe("runPreflightProbe", () => {
       return ok({ stdout: "I have completed the preflight steps successfully!" });
     });
     expect(r.status).toBe("pass");
-    expect((r as { warning?: string }).warning).toContain("report block");
+    expect((r as { warning?: string }).warning).toContain("without calling chunk_report");
   });
 
-  it("still fails a broken environment even when the report block is missing", async () => {
-    // Report-shape must never mask a real environment break: no files written
-    // AND no report → the environment failure is what gets named.
+  it("still fails a broken environment even when the worker made no report", async () => {
+    // A missing report must never mask a real environment break: no files
+    // written AND no report → the environment failure is what gets named.
     const r = await runPreflightProbe({ projectDir: dir }, async () =>
       ok({ stdout: "done, all good!" }));
     expect(r).toMatchObject({ status: "fail", contract: "file-write-anchoring" });
   });
 
   it("names file-write-anchoring when the relative write never lands", async () => {
-    const r = await runPreflightProbe({ projectDir: dir }, async () => ok({ stdout: REPORT("x") }));
+    const r = await runPreflightProbe({ projectDir: dir }, async () => ok({ chunkReport: REPORT("x") }));
     expect(r).toMatchObject({ status: "fail", contract: "file-write-anchoring" });
   });
 
   it("names file-read-anchoring when the echoed token is wrong", async () => {
     const r = await runPreflightProbe({ projectDir: dir }, async () => {
       writeFileSync(join(dir, PREFLIGHT_FILES.echo), "not-the-token");
-      return ok({ stdout: REPORT("not-the-token") });
+      return ok({ chunkReport: REPORT("not-the-token") });
     });
     expect(r).toMatchObject({ status: "fail", contract: "file-read-anchoring" });
   });
@@ -108,7 +109,7 @@ describe("runPreflightProbe", () => {
     const r = await runPreflightProbe({ projectDir: dir }, async () => {
       const t = token();
       writeFileSync(join(dir, PREFLIGHT_FILES.echo), t);
-      return ok({ stdout: REPORT(t) });
+      return ok({ chunkReport: REPORT(t) });
     });
     expect(r).toMatchObject({ status: "fail", contract: "bash-cwd" });
   });
@@ -116,7 +117,7 @@ describe("runPreflightProbe", () => {
   it("cleans up probe files even when the verdict is fail", async () => {
     await runPreflightProbe({ projectDir: dir }, async () => {
       writeFileSync(join(dir, PREFLIGHT_FILES.echo), "wrong");
-      return ok({ stdout: REPORT("wrong") });
+      return ok({ chunkReport: REPORT("wrong") });
     });
     for (const f of Object.values(PREFLIGHT_FILES)) {
       expect(existsSync(join(dir, f))).toBe(false);

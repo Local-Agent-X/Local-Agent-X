@@ -19,7 +19,6 @@ import { randomBytes } from "node:crypto";
 import { readFileSync, writeFileSync, existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { runChunkAgent, type ChunkAgentInvocation, type ChunkAgentResult } from "../agents/chunk-runner.js";
-import { parseChunkReport } from "../chunk-review/report-parser.js";
 
 export const PREFLIGHT_FILES = {
   sentinel: ".lax-preflight-sentinel.txt",
@@ -64,16 +63,8 @@ function preflightTask(projectRootFwd: string, token: string): string {
     `\`${PREFLIGHT_FILES.echo}\` containing exactly that token and nothing else.\n` +
     `3. Using bash, run exactly:\n` +
     `   cd "${projectRootFwd}" && cp ${PREFLIGHT_FILES.echo} ${PREFLIGHT_FILES.bash}\n` +
-    `4. Reply with the standard report block, NOTE carrying the token:\n\n` +
-    `STATUS: done\n` +
-    `DONE_WHEN: met\n` +
-    `CHANGED: ${PREFLIGHT_FILES.echo}, ${PREFLIGHT_FILES.bash}\n` +
-    `TESTS: n/a\n` +
-    `NEW_FAILURES: none\n` +
-    `PRE_EXISTING_FAILURES: none\n` +
-    `SPEC_GAPS: none\n` +
-    `LAUNCH_READINESS: none\n` +
-    `NOTE: preflight token <the token you read>`
+    `4. End by calling chunk_report with status "done", done_when "met", and note ` +
+    `"preflight token <the token you read>".`
   );
 }
 
@@ -129,10 +120,10 @@ export async function runPreflightProbe(
  *  The halt reason is what the parent chat agent diagnoses from, so it must
  *  carry the evidence, not a guess. */
 function workerEvidence(result: ChunkAgentResult): string {
-  const report = parseChunkReport(result.stdout);
-  if (report.parsed) {
-    const note = report.note ? ` NOTE: ${JSON.stringify(report.note.slice(0, 300))}` : "";
-    return ` Worker's own report — STATUS: ${report.status}.${note}`;
+  const report = result.chunkReport;
+  if (report) {
+    const note = report.note ? ` Its note: ${JSON.stringify(report.note.slice(0, 300))}` : "";
+    return ` Worker's own report: ${report.status}.${note}`;
   }
   const tail = result.stdout.trim().slice(-300);
   return tail ? ` Worker output tail: ${JSON.stringify(tail)}` : "";
@@ -140,11 +131,12 @@ function workerEvidence(result: ChunkAgentResult): string {
 
 /** The verification ladder. Environment contract FIRST — that is what the
  *  preflight uniquely and cheaply verifies (paths, gates, cwd), and a break
- *  there bricks every chunk. Report discipline is checked LAST and only warns:
- *  it has its own per-chunk gate (report-shape → push_back retry), so a worker
- *  that did the work but ended on prose must not halt the whole build when the
- *  environment is provably sound (live false-halt 2026-07-02: the token
- *  round-tripped perfectly but grok ended on an explanation of task errors). */
+ *  there bricks every chunk. Whether the worker reported is checked LAST and
+ *  only warns: a chunk whose worker makes no report is still built, tested and
+ *  reviewed, so a worker that did the work but ended on prose must not halt
+ *  the whole build when the environment is provably sound (live false-halt
+ *  2026-07-02: the token round-tripped perfectly but grok ended on an
+ *  explanation of task errors). */
 function verdict(result: ChunkAgentResult, token: string, paths: Record<"sentinel" | "echo" | "bash", string>): PreflightResult {
   if (result.exitCode === 124) {
     return { status: "fail", contract: "worker-timeout", detail: `worker produced no result within the probe window — provider stall or event plumbing (handler:agent-result) not firing. ${result.error ?? ""}`.trim() };
@@ -170,14 +162,14 @@ function verdict(result: ChunkAgentResult, token: string, paths: Record<"sentine
     return { status: "fail", contract: "bash-cwd", detail: `bash copy carried ${JSON.stringify(bashed.slice(0, 80))} instead of the token — the shell resolved a different working directory than the project root.` };
   }
 
-  // Environment is sound. Report discipline is advisory here — warn, don't halt;
-  // the per-chunk report-shape gate handles a prose-ending worker with a retry.
-  const report = parseChunkReport(result.stdout);
-  if (!report.parsed) {
+  // Environment is sound. A worker that did not end by calling chunk_report is
+  // worth knowing about before the build spends hours with it, but it is not a
+  // reason to stop: its chunks are measured whether or not it reports.
+  if (!result.chunkReport) {
     return {
       status: "pass",
       durationMs: result.durationMs,
-      warning: `environment contract verified, but the worker ended without a parseable report block (report discipline is weak for this model). The per-chunk report-shape gate will retry it. Output tail: ${JSON.stringify(result.stdout.slice(-200))}`,
+      warning: `environment contract verified, but the worker ended without calling chunk_report (this model may not end its runs with the report tool; its chunks are still built, tested and reviewed). Output tail: ${JSON.stringify(result.stdout.slice(-200))}`,
     };
   }
 

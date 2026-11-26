@@ -38,7 +38,7 @@ vi.mock("../src/sandbox/index.js", async (importOriginal) => {
 });
 vi.mock("../src/tools/shell-proxy-env.js", () => ({ shellProxyEnv: async () => ({}), shellProxyEnvSync: () => ({}) }));
 
-import { ensureGitBaseline, getHeadSha, gitAdd, gitCommit, gitDiffPath, gitFailText } from "../src/auto-build/git-helpers.js";
+import { chunkChangedFiles, ensureGitBaseline, getHeadSha, gitAdd, gitCommit, gitDiffPath, gitFailText } from "../src/auto-build/git-helpers.js";
 import { makeInitial, markHalted } from "../src/auto-build/orchestrator/state.js";
 import { SANDBOX_PROOF_PENDING_RETRY } from "../src/sandbox/index.js";
 
@@ -273,6 +273,45 @@ describe("git runs in the shell cage, hardened against the agent's own repo", ()
 // Companion backstop: the halt reason is rewritten to disk on every event
 // and broadcast to chat — it must stay a message even if a caller hands it
 // a stderr dump.
+// What a chunk changed is asked of git. A worker's own CHANGED line was the
+// only source until 2026-11-26, and nothing checked it.
+describe("chunkChangedFiles", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "auto-build-changed-"));
+  });
+  afterEach(() => {
+    try { rmSync(dir, { recursive: true, force: true }); } catch { /* win file locks */ }
+  });
+
+  it("lists what was edited, added, deleted and committed since the sha, and none of the engine's own files", async () => {
+    mkdirSync(join(dir, "src"));
+    writeFileSync(join(dir, "src", "kept.ts"), "1");
+    writeFileSync(join(dir, "src", "edited.ts"), "1");
+    writeFileSync(join(dir, "src", "gone.ts"), "1");
+    const { sha } = await ensureGitBaseline(dir);
+
+    writeFileSync(join(dir, "src", "edited.ts"), "2");
+    rmSync(join(dir, "src", "gone.ts"));
+    writeFileSync(join(dir, "src", "committed.ts"), "1");
+    git(dir, "add", "src/committed.ts");
+    git(dir, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "wip", "--", "src/committed.ts");
+    writeFileSync(join(dir, "new file.ts"), "1");
+    writeFileSync(join(dir, ".lax-build-run.json"), "{}");
+    mkdirSync(join(dir, ".skeptic"));
+    writeFileSync(join(dir, ".skeptic", "probe.test.ts"), "1");
+
+    expect(await chunkChangedFiles(dir, sha)).toEqual(["new file.ts", "src/committed.ts", "src/edited.ts", "src/gone.ts"]);
+  });
+
+  it("is empty for an untouched tree, and when git cannot say", async () => {
+    writeFileSync(join(dir, "a.ts"), "1");
+    const { sha } = await ensureGitBaseline(dir);
+    expect(await chunkChangedFiles(dir, sha)).toEqual([]);
+    expect(await chunkChangedFiles(dir, "0000000000000000000000000000000000000000")).toEqual([]);
+  });
+});
+
 describe("markHalted caps the persisted halt reason", () => {
   it("truncates megabyte reasons to ~4KB", () => {
     const s = makeInitial({ opId: "op_x", sessionId: "s", projectDir: "/p", planPath: "/p/spec/plan.md", totalChunks: 3, startingChunk: 1 });

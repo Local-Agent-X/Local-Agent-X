@@ -33,10 +33,11 @@ vi.mock("../advisor/lead-decisions.js", () => ({
 
 const { handlePushBack, MAX_FIX_ROUNDS } = await import("./handle-push-back.js");
 const { MAX_LEAD_ROUNDS } = await import("./lead-rounds.js");
+const { chunkReportOf } = await import("../chunk-review/chunk-report.js");
 
 const chunk = { number: 5, title: "Routing rule", dependsOn: [] } as unknown as ParsedChunk;
 const plan = { chunks: [chunk] } as unknown as ParsedPlan;
-const report = { note: "", specGaps: "", doneWhen: "met", changed: [] } as unknown as ChunkReviewOutcome["report"];
+const report = chunkReportOf({ status: "done", doneWhen: "met", note: "built it", specGaps: "", launchReadiness: [], machineBlocked: [], ownerQuestion: "" });
 const pushedBack = (reasoning: string): ChunkReviewOutcome =>
   ({ action: "push_back", reasoning, findings: [{ gate: "skeptic", action: "push_back", reasoning }], report }) as unknown as ChunkReviewOutcome;
 const green: ChunkReviewOutcome = { action: "proceed", reasoning: "All gates passed.", findings: [], report } as unknown as ChunkReviewOutcome;

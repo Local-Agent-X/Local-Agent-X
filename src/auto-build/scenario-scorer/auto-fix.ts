@@ -41,9 +41,9 @@ export interface AutoFixOptions {
 }
 
 export interface AutoFixResult {
-  /** Did the fix worker complete and produce a report? */
+  /** Did the fix worker finish (it reported, or its run ended cleanly)? */
   workerCompleted: boolean;
-  /** Worker's stdout — the report body. */
+  /** What the worker said it did: its chunk_report note, else its last words. */
   workerReport: string;
   /** Wall-clock duration. */
   durationMs: number;
@@ -69,7 +69,10 @@ export async function runAutoFixWorker(opts: AutoFixOptions): Promise<AutoFixRes
   });
 
   const durationMs = Date.now() - startedAt;
-  if (result.exitCode !== 0 && !result.stdout.trim()) {
+  // It ends by calling chunk_report, so a worker that reported has finished
+  // however its run was then marked; its last words are usually empty.
+  const said = result.chunkReport?.note || result.stdout;
+  if (result.exitCode !== 0 && !said.trim()) {
     return {
       workerCompleted: false,
       workerReport: result.error || "(no output)",
@@ -84,14 +87,14 @@ export async function runAutoFixWorker(opts: AutoFixOptions): Promise<AutoFixRes
     const commit = await commitChunk(opts.projectDir, { ...opts.chunk, title: `${opts.chunk.title} — scenario auto-fix` });
     return {
       workerCompleted: true,
-      workerReport: result.stdout,
+      workerReport: said,
       durationMs,
       fixSha: commit.committed ? commit.sha : null,
     };
   } catch (e) {
     return {
       workerCompleted: true,
-      workerReport: result.stdout,
+      workerReport: said,
       durationMs,
       fixSha: null,
       error: `commit failed after fix-worker: ${(e as Error).message}`,

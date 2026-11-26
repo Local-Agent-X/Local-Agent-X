@@ -293,3 +293,38 @@ describe("update-pipeline gitSafeCmd", () => {
     expect(gitSafeCmd("npm install")).toBe("npm install");
   });
 });
+
+// A git command that writes a commit fails on a repo with no identity, which
+// is every project the agent makes when git runs as the Windows cage's account.
+// The fallback was written site by site, and the one merge without it stopped
+// a parallel build (2026-11-26). So the sites are counted: a `commit`, or a
+// `merge` that can write one, is spelled out only where the fallback is.
+describe("every git command that writes a commit carries the identity fallback", () => {
+  const SRC = join(dirname(fileURLToPath(import.meta.url)), "..");
+  const sources = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+    const at = join(dir, e.name);
+    // sync/ runs its own git with an identity in its environment (sync/git-auth.ts gitCredentialEnv).
+    if (e.isDirectory()) return e.name === "vendor" || e.name === "node_modules" || e.name === "sync" ? [] : sources(at);
+    return e.name.endsWith(".ts") && !e.name.endsWith(".test.ts") && !e.name.endsWith(".d.ts") ? [at] : [];
+  });
+  // git(["commit"...]) / gitAsync / gitRun / execGitSync, as an array or one string.
+  const WRITES = /\b(?:git|gitAsync|gitRun|execGitSync)\(\s*(?:\[\s*)?["'`](?:commit|merge|revert|cherry-pick)(?=["'`\s])[^\n]*/g;
+  const writesNoCommit = (call: string) => /--ff-only|--abort/.test(call);
+
+  it("none is called bare", () => {
+    const bare = sources(SRC).flatMap((file) =>
+      (readFileSync(file, "utf-8").match(WRITES) ?? []).filter((call) => !writesNoCommit(call)).map((call) => `${relative(SRC, file).replace(/\\/g, "/")}: ${call.slice(0, 80)}`));
+    expect(bare).toEqual([]);
+  });
+
+  it("the scan sees a bare one", () => {
+    const sample = [
+      'git(["merge", wt.baseBranch, "--no-edit"], wt.path);',
+      'git("merge --abort", wt.path);',
+      'git(["merge", "--ff-only", b], root);',
+      'gitAsync(["commit", "-m", m], cwd);',
+      'git(["merge-base", "--is-ancestor", a, b], root);',
+    ].join("\n");
+    expect((sample.match(WRITES) ?? []).filter((c) => !writesNoCommit(c))).toHaveLength(2);
+  });
+});

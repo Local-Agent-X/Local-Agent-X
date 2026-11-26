@@ -11,8 +11,7 @@
  * kept work no longer merges with base, the merge is undone and the chunk
  * builds fresh, still with the findings.
  */
-import { git } from "../../agency/worktree-core.js";
-import { HARNESS_COMMIT_IDENTITY, isNoGitIdentity } from "../../git-safety.js";
+import { git, gitWritingCommit } from "../../agency/worktree-core.js";
 import { setAsideRecordFor } from "../failure-recovery.js";
 import type { ParsedChunk } from "../plan-parser.js";
 import type { EmitFn } from "./types.js";
@@ -45,12 +44,7 @@ function branchExists(branch: string, cwd: string): boolean {
 export function mergeCarriedWork(worktreePath: string, branch: string): { merged: boolean; detail: string } {
   const merge = ["merge", "--no-edit", "--no-ff", branch];
   try {
-    try {
-      git(merge, worktreePath);
-    } catch (e) {
-      if (!isNoGitIdentity((e as Error).message)) throw e;
-      git([...HARNESS_COMMIT_IDENTITY, ...merge], worktreePath);
-    }
+    gitWritingCommit(merge, worktreePath);
     return { merged: true, detail: `merged '${branch}'` };
   } catch (e) {
     try { git(["merge", "--abort"], worktreePath); } catch { /* nothing in progress: the merge never started */ }

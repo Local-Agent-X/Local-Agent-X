@@ -170,19 +170,27 @@ export function git(args: string[] | string, cwd: string): string {
 }
 
 /**
- * `git commit` in `cwd`, under the repo's identity or, where git has none,
- * the harness's own (git-safety.ts). A worktree of a project the agent made
- * has no identity: its commit failed, so a parallel build's chunk never
- * reached its branch and a halted one's work was not saved (label-check,
- * 2026-11-21).
+ * Run a git command that writes a commit (`commit`, or a `merge` that is not a
+ * fast-forward) in `cwd`, under the repo's identity or, where git has none,
+ * the harness's own (git-safety.ts). A project the agent made has no identity
+ * and the Windows cage's account never sees a global one. Every such command
+ * goes through here (worktree-git-safety.test.ts scans for one that does not):
+ * the fallback used to be written at each site, and the merge that brings a
+ * chunk's branch up to date had none, so two reviewed chunks of a parallel
+ * build could not land once an earlier one had (2026-11-26).
  */
-export function commitWithFallbackIdentity(commitArgs: string[], cwd: string): string {
+export function gitWritingCommit(args: string[], cwd: string): string {
   try {
-    return git(["commit", ...commitArgs], cwd);
+    return git(args, cwd);
   } catch (e) {
     if (!isNoGitIdentity((e as Error).message)) throw e;
-    return git([...HARNESS_COMMIT_IDENTITY, "commit", ...commitArgs], cwd);
+    return git([...HARNESS_COMMIT_IDENTITY, ...args], cwd);
   }
+}
+
+/** `git commit` in `cwd`, under the repo's identity or the harness's own. */
+export function commitWithFallbackIdentity(commitArgs: string[], cwd: string): string {
+  return gitWritingCommit(["commit", ...commitArgs], cwd);
 }
 
 /**

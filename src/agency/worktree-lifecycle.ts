@@ -7,7 +7,7 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-import { activeWorktrees, git, commitWithFallbackIdentity, logger, MAX_CONCURRENT_WORKTREES, reRecordUnchangedFiles, WORKTREE_BASE, worktreeRemoveArgs, worktreeSlotAvailable } from "./worktree-core.js";
+import { activeWorktrees, git, gitWritingCommit, commitWithFallbackIdentity, logger, MAX_CONCURRENT_WORKTREES, reRecordUnchangedFiles, WORKTREE_BASE, worktreeRemoveArgs, worktreeSlotAvailable } from "./worktree-core.js";
 import { hasVanishedWorktreeAt, linkDirectoryInto, listCheckedOutBranches, unlinkSharedJunctions } from "./worktree-junctions.js";
 import { claimRecoveredWorktree, forgetWorktreeOwnership, ownsWorktree, registerWorktreeOwnership } from "./worktree-recovery.js";
 import { findMergeOverlaps, noteMerged, overlapSummary, type MergeOverlap } from "./merge-overlap.js";
@@ -130,7 +130,7 @@ export function mergeWorktree(
     const { changed, overlaps } = findMergeOverlaps(mergeFacts);
     try {
       try {
-        git(["merge", wt.baseBranch, "--no-edit"], wt.path);
+        gitWritingCommit(["merge", wt.baseBranch, "--no-edit"], wt.path);
       } catch (conflict) {
         if (!concludeResolvedMerge(wt.path, opts.resolveConflicts)) throw conflict;
       }

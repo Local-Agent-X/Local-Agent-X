@@ -847,6 +847,35 @@ describe("a worktree commit in a repo with no git identity", () => {
     }
   });
 
+  // 2026-11-26: chunks 3 and 4 of a parallel build passed review, then could
+  // not land. Chunk 2 had landed while they were built, so bringing each up to
+  // date wrote a merge commit, and that merge had no identity to write it with.
+  it("a chunk built beside one that landed first is merged under the harness identity", () => {
+    const { repo, g } = initRepo();
+    const name = `no-identity-behind-${Date.now().toString(36)}`;
+    try {
+      withNoIdentity(() => {
+        const wt = createNamedWorktree(name, `autobuild/${name}`, repo, "run-1");
+        writeFileSync(join(wt!.path, "chunk3.txt"), "work");
+        expect(commitInWorktree(name, "chunk 3: list")).toMatch(/^[0-9a-f]{40}$/);
+        // Another chunk lands on the base while this one is still out.
+        writeFileSync(join(repo, "chunk2.txt"), "landed first");
+        g(["add", "-A"]);
+        g(["commit", "-qm", "chunk 2: shell"]);
+        g(["config", "--unset", "user.email"]);
+        g(["config", "--unset", "user.name"]);
+        expect(mergeWorktree(name)).toMatchObject({ merged: true, files: 1 });
+      });
+      expect(g(["ls-tree", "--name-only", "main"]).split("\n")).toEqual(expect.arrayContaining(["chunk2.txt", "chunk3.txt"]));
+      expect(g(["log", "-1", "--format=%P", "main"]).split(" ")).toHaveLength(2);
+      expect(g(["log", "-1", "--format=%cn <%ce>", "main"])).toBe("lax-auto-build <auto-build@localagentx.local>");
+    } finally {
+      try { cleanupWorktree(name); } catch { /* best-effort */ }
+      activeWorktrees.delete(name);
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
   it("a repo that has an identity keeps it", () => {
     const { repo, g } = initRepo();
     const name = `own-identity-${Date.now().toString(36)}`;

@@ -173,8 +173,12 @@ export const HARNESS_MARKERS: readonly HarnessMarker[] = [
   },
   {
     id: "repeated-call-short-circuit",
-    pattern: /\[REPEATED CALL[^\]\n]{0,200}\]/g,
-    sample: "[REPEATED CALL — identical to a tool call made earlier this session. Returning the previous result without re-executing.]",
+    // The note runs 201 characters inside its brackets. The cap here was 200,
+    // so the note as it is really written was never stripped: only the
+    // shortened sample that stood below was (found 2026-11-26, when the note
+    // became a constant the contract test scans).
+    pattern: /\[REPEATED CALL[^\]\n]{0,400}\]/g,
+    sample: "[REPEATED CALL — identical to a tool call made earlier this session. Returning the previous result without re-executing. If you need fresh data, change the arguments. Otherwise, focus on the user's current question.]",
     emitter: "tool-execution/resolve-tool.ts",
   },
   // Observed 2026-09-20: a model closed a reply to the user by writing the

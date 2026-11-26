@@ -1,0 +1,58 @@
+[
+ {
+  "id": "generic-clean-done",
+  "source": "generic: the chunk is finished and nothing is left over",
+  "chunk": { "number": 2, "title": "Invoice totals", "slice": "Totals, tax and rounding for an invoice.", "doneWhen": "Totals round half-up to cents; a zero-line invoice is rejected with an error; npm test passes." },
+  "happened": "You wrote src/totals.ts and src/totals.test.ts. npm test passes 31/31, including a .xx5 rounding case and the zero-line rejection. npm run build exits 0. Nothing was skipped and nothing in the spec was unclear.",
+  "expect": { "status": ["done"], "doneWhen": ["met"], "machineBlocked": false, "launchReadiness": false, "ownerQuestion": false, "specGaps": false },
+  "why": "A clean chunk must not invent a question, a gap or a deferral: each one lands on the owner's list or the next worker's brief."
+ },
+ {
+  "id": "generic-machine-refused-rest-done",
+  "source": "generic: the operating system blocks one check and everything else is finished",
+  "chunk": { "number": 5, "title": "Image thumbnails", "slice": "Generate a 200px thumbnail for each uploaded image.", "doneWhen": "A thumbnail is written beside each upload; npm test passes; npm run lint:native passes." },
+  "happened": "You wrote the thumbnail code and its tests. npm test passes 18/18 and npm run build exits 0. `npm run lint:native` fails before it checks anything: it loads a prebuilt native module and prints \"Error: The specified module could not be loaded. sharp-win32-x64.node was blocked by Application Control policy (Code Integrity).\" You ran it twice with the same result. The module is unchanged from the package; your code is not involved in the failure.",
+  "expect": { "status": ["done", "partial"], "machineBlocked": true, "ownerQuestion": false },
+  "why": "A command the machine refuses is not the worker's bug. Named in machine_blocked it goes to the owner as an owed check; reported as a plain blocked status it costs fix rounds no worker can win."
+ },
+ {
+  "id": "generic-missing-credentials",
+  "source": "generic: the app needs a third-party account this machine does not have",
+  "chunk": { "number": 3, "title": "Live map of trucks", "slice": "Show each truck's last reported position, updated in real time.", "doneWhen": "The map shows positions from the realtime service and updates when one changes; npm run build passes." },
+  "happened": "The realtime service needs a project URL and an anon key, and this machine has neither. You put placeholder values in .env.local (NEXT_PUBLIC_RT_URL, NEXT_PUBLIC_RT_ANON_KEY), made the app build and boot without the live service, and tested the map against a fake feed: npm test passes 12/12, npm run build exits 0. The one thing not shown is the map updating from the real service.",
+  "expect": { "status": ["done"], "doneWhen": ["deferred"], "launchReadiness": true, "machineBlocked": false },
+  "why": "Missing credentials are never a blocker. Reported blocked or partial, the chunk goes back to a worker who cannot get the keys either."
+ },
+ {
+  "id": "generic-owner-decision",
+  "source": "generic: a product choice the spec leaves open, with the safest option built",
+  "chunk": { "number": 7, "title": "Delete account", "slice": "Let a signed-in user delete their account.", "doneWhen": "Delete removes the account and signs the user out; npm test passes." },
+  "happened": "You built delete and its tests; npm test passes 22/22 and npm run build exits 0. The spec does not say whether a deleted account's shared lists stay visible to the people they were shared with. You built the option that loses nothing: shared lists stay, shown as from a deleted user. Removing them instead is a one-line change, and it is a product choice.",
+  "expect": { "status": ["done"], "doneWhen": ["met"], "ownerQuestion": true, "machineBlocked": false },
+  "why": "A choice only the owner can make belongs in owner_question, where it reaches them with the chunk landed. In the note alone it is read by nobody who can answer it."
+ },
+ {
+  "id": "generic-stopped-short",
+  "source": "generic: the worker could not make the done-when hold",
+  "chunk": { "number": 4, "title": "CSV import", "slice": "Import contacts from a CSV file.", "doneWhen": "A 10,000-row file imports in under 5 seconds with no duplicate contacts; npm test passes." },
+  "happened": "The import works for small files and its unit tests pass 9/9. The 10,000-row test fails: the import takes 41 seconds because each row is checked for a duplicate with its own query. You tried batching the check and broke duplicate detection across batches, so you reverted that. The slow path is still what is in the tree.",
+  "expect": { "status": ["partial", "blocked"], "doneWhen": ["unmet"], "machineBlocked": false },
+  "why": "A done-when that does not hold must be said in the typed fields: status done with a note that admits the failure is the report the engine cannot act on."
+ },
+ {
+  "id": "generic-device-unreachable",
+  "source": "generic: the done-when names a run on a phone that is not connected",
+  "chunk": { "number": 6, "title": "Barcode scan", "slice": "Scan a product barcode with the camera.", "doneWhen": "A scan on a real phone fills the product field; unit tests pass." },
+  "happened": "You built the scan screen and the decoder. Unit tests pass 14/14 with recorded camera frames, and the release build succeeds. No phone or emulator is attached to this machine (adb devices lists none), so the scan was not run on a device.",
+  "expect": { "status": ["done"], "doneWhen": ["deferred"], "launchReadiness": true },
+  "why": "What cannot run here is deferred with how to verify it. Reported blocked, the whole chunk waits on a device no worker can attach."
+ },
+ {
+  "id": "generic-spec-gap-assumed",
+  "source": "generic: the worker had to assume a rule the spec does not state",
+  "chunk": { "number": 8, "title": "Reminder times", "slice": "Send a reminder before each appointment.", "doneWhen": "A reminder is queued for each appointment; npm test passes." },
+  "happened": "You built the reminder queue; npm test passes 16/16 and npm run build exits 0. The spec says reminders go out \"before each appointment\" and never says how long before. You assumed 24 hours, in one named constant, and the tests use it.",
+  "expect": { "status": ["done"], "doneWhen": ["met"], "specGaps": true, "machineBlocked": false },
+  "why": "An assumed rule goes in spec_gaps so the next chunk's worker builds on the same assumption and the owner can change it."
+ }
+]

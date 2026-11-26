@@ -6,7 +6,7 @@
    "chunk": { "number": 2, "title": "Invoice totals", "slice": "Totals, tax and rounding for an invoice.", "doneWhen": "Totals round half-up to cents; a zero-line invoice is rejected with an error; npm test passes.", "scenarios": "3" },
    "totalChunks": 6, "round": 0, "maxRounds": 8,
    "finding": "The skeptic broke it: Breaks: done-when 'Totals round half-up to cents'. src/totals.ts:22 uses Math.round on the float, so 2.675 becomes 2.67. A probe test with the line [{qty:1, price:2.675}] shows 2.67 where 2.68 is due. npm test passes 31/31; no test covers a .xx5 amount.",
-   "workerReport": "STATUS: done\nDONE_WHEN: met\nNOTE: Totals, tax and rounding implemented with tests.\nSPEC_GAPS: (empty)",
+   "workerReport": "Status: done; done-when: met\nNote: Totals, tax and rounding implemented with tests.",
    "earlier": [], "repeated": false
   },
   "right": ["continue", "fresh"], "wrong": ["accept", "park", "owed", "narrow"],
@@ -19,7 +19,7 @@
    "chunk": { "number": 3, "title": "Tag parser", "slice": "Parse comma-separated tags typed by the user.", "doneWhen": "Tags split on commas, trimmed, deduplicated case-insensitively; empty input is rejected. Examples: 'a, b', 'A,a', ''.", "scenarios": "none" },
    "totalChunks": 5, "round": 3, "maxRounds": 8,
    "finding": "The skeptic broke it: Breaks: spec/product.md:9 'Tags are deduplicated case-insensitively.' The Turkish dotted capital I ('İstanbul' vs 'istanbul') is kept as two tags because toLowerCase is locale-free. Probe: parseTags('İstanbul, istanbul') returns two tags.",
-   "workerReport": "STATUS: done\nDONE_WHEN: met\nNOTE: Fullwidth commas, zero-width spaces and trailing separators from earlier rounds are handled with regression tests.\nSPEC_GAPS: (empty)",
+   "workerReport": "Status: done; done-when: met\nNote: Fullwidth commas, zero-width spaces and trailing separators from earlier rounds are handled with regression tests.",
    "earlier": ["Fullwidth commas were not treated as separators.", "Zero-width spaces made a tag look empty but kept it.", "A trailing comma produced an empty tag."],
    "repeated": false
   },
@@ -33,7 +33,7 @@
    "chunk": { "number": 1, "title": "Mobile shell", "slice": "The app shell, installable on Android.", "doneWhen": "npm run check passes; the release APK builds; installing on a phone is a launch-readiness item.", "scenarios": "none" },
    "totalChunks": 4, "round": 2, "maxRounds": 8,
    "finding": "LAUNCH_READINESS item lacks a concrete verify step. Each item must name how to verify it before launch (e.g. \"set X env, run Y test, assert Z\"), not just \"test in staging\". Got: \"Install on a phone: adb -s <serial> install -r app-release.apk, require Success; cold-launch with adb shell am start -n com.example/.MainActivity and confirm the home screen renders within 5 s.\"",
-   "workerReport": "STATUS: done\nDONE_WHEN: met\nNOTE: Shell built; check and release build pass.\nSPEC_GAPS: (empty)",
+   "workerReport": "Status: done; done-when: met\nNote: Shell built; check and release build pass.",
    "earlier": ["The same check rejected an earlier wording of the install item."], "repeated": false
   },
   "right": ["overrule", "accept"], "wrong": ["park", "narrow", "fresh", "split", "owed"],
@@ -46,7 +46,7 @@
    "chunk": { "number": 4, "title": "Camera scan", "slice": "Scan a receipt with the phone camera and an on-device model.", "doneWhen": "The scan adapter, its fallbacks and photo cleanup are covered by tests; the release build passes; a live scan on a supported phone is verified when one is available.", "scenarios": "5" },
    "totalChunks": 5, "round": 5, "maxRounds": 8,
    "finding": "The skeptic held most of it: adapter fallbacks, cleanup and the release build pass. It notes: a receipt with a double space inside a store name is not normalized (a follow-up). Live verification could not run: no cloud project is configured and only an x86_64 emulator is attached, so held-out scenario 5 could not be judged.",
-   "workerReport": "STATUS: done\nDONE_WHEN: deferred-to-launch-readiness\nNOTE: Everything that can run here passes. Live scan needs a supported phone and the owner's cloud project.\nSPEC_GAPS: (empty)",
+   "workerReport": "Status: done; done-when: deferred-to-launch-readiness\nNote: Everything that can run here passes. Live scan needs a supported phone and the owner's cloud project.",
    "earlier": ["Medical-style text was accepted as a line item.", "A failed capture left a photo on disk."], "repeated": false
   },
   "right": ["owed", "accept"], "wrong": ["park", "continue", "fresh", "split"],
@@ -59,7 +59,7 @@
    "chunk": { "number": 2, "title": "Content filter", "slice": "Reject model output that gives advice instead of item names.", "doneWhen": "Only item names reach the editable list; advice of any wording falls back to manual entry.", "scenarios": "2" },
    "totalChunks": 5, "round": 3, "maxRounds": 8,
    "finding": "The skeptic broke it: Breaks: done-when 'advice of any wording falls back to manual entry.' The output ['Zinc', 'Doubling your dose is fine'] reaches the editable list: src/filter.ts:40 is a word denylist and this wording avoids every listed word.",
-   "workerReport": "STATUS: done\nDONE_WHEN: met\nNOTE: Added the reported phrases to the denylist with tests.\nSPEC_GAPS: (empty)",
+   "workerReport": "Status: done; done-when: met\nNote: Added the reported phrases to the denylist with tests.",
    "earlier": ["'Stop taking warfarin' reached the list.", "'Safe with warfarin' reached the list."], "repeated": true
   },
   "right": ["fresh", "split", "narrow"], "wrong": ["accept", "continue", "park", "owed"],
@@ -72,7 +72,7 @@
    "chunk": { "number": 3, "title": "Sync queue", "slice": "Queue writes while offline and replay them.", "doneWhen": "Queued writes replay in order after reconnect; npm test passes.", "scenarios": "none" },
    "totalChunks": 6, "round": 6, "maxRounds": 8,
    "finding": "npm test exited 1: 2 failing (queue.replay preserves order; queue.replay drops a write that conflicts). The skeptic otherwise held.",
-   "workerReport": "STATUS: done\nDONE_WHEN: met\nNOTE: Replay implemented.\nSPEC_GAPS: (empty)",
+   "workerReport": "Status: done; done-when: met\nNote: Replay implemented.",
    "earlier": ["Replay ran twice after a fast reconnect."], "repeated": false
   },
   "right": ["continue", "fresh"], "wrong": ["accept", "overrule", "owed", "park"],
@@ -85,7 +85,7 @@
    "chunk": { "number": 2, "title": "Settings page", "slice": "A settings page that saves to local storage.", "doneWhen": "Settings save and reload; npm test passes.", "scenarios": "none" },
    "totalChunks": 4, "round": 1, "maxRounds": 8,
    "finding": "The skeptic broke it: The skeptic gave no VERDICT line, so the change is not shown to hold.",
-   "workerReport": "STATUS: done\nDONE_WHEN: met\nNOTE: Settings save and reload, with tests; npm test passes 18/18.\nSPEC_GAPS: (empty)",
+   "workerReport": "Status: done; done-when: met\nNote: Settings save and reload, with tests; npm test passes 18/18.",
    "earlier": [], "repeated": false
   },
   "right": ["continue", "overrule"], "wrong": ["fresh", "narrow", "park", "split", "owed"],
@@ -98,7 +98,7 @@
    "chunk": { "number": 5, "title": "Sharing", "slice": "Share a list with another user.", "doneWhen": "A shared list is visible to the invitee; spec/product.md rules hold.", "scenarios": "6" },
    "totalChunks": 6, "round": 1, "maxRounds": 8,
    "finding": "The skeptic broke it: spec/product.md:4 says 'Lists never leave the device' and spec/product.md:12 says 'A shared list is visible to the invitee on their phone.' The change uploads shared lists to the server, breaking line 4. No local-only design satisfies both.",
-   "workerReport": "STATUS: done\nDONE_WHEN: met\nNOTE: Sharing uploads the list; SPEC_GAPS names the conflict.\nSPEC_GAPS: lines 4 and 12 of product.md conflict: sharing needs the list to leave the device.",
+   "workerReport": "Status: done; done-when: met\nNote: Sharing uploads the list; SPEC_GAPS names the conflict.\nSpec gaps: lines 4 and 12 of product.md conflict: sharing needs the list to leave the device.",
    "earlier": [], "repeated": false
   },
   "right": ["park"], "wrong": ["accept", "continue", "fresh", "owed", "overrule"],

@@ -248,6 +248,12 @@ const ROLE_SPECS: Record<ChunkAgentRole, RoleSpec> = {
   },
 };
 
+/** The brief a role works under, without its skill's methodology: what the
+ *  report eval shows a model beside the report tool (eval/worker-report). */
+export function chunkRoleBrief(role: ChunkAgentRole): string {
+  return ROLE_SPECS[role].discipline;
+}
+
 /** What the run delivered, under its role's field of the result. */
 function deliveredReport(session: string, kind: ReportKind): Pick<ChunkAgentResult, "chunkReport" | "skepticVerdict" | "breakerFindings"> {
   if (kind === "chunk") { const r = takeReport(session, "chunk"); return r ? { chunkReport: r } : {}; }

@@ -11,6 +11,8 @@ import type { Session, ToolBlockRecord, ToolResultStatus } from "../types.js";
 import { isHarnessRow } from "../harness-rows.js";
 import { parseResultHeader } from "../tools/result-helpers.js";
 import { messageProvenance } from "./session-message-provenance.js";
+import { filesNamedInReply } from "../workspace/named-files.js";
+import type { TurnFileRef } from "../broker-transport/vendor/turn-files.js";
 import { mediaRefOf, toolMessageBlock, toolMessageMedia, toolMessageMetadata, toolMessageStatus, type ToolEndMedia } from "../tool-execution/tool-message-carry.js";
 
 /**
@@ -106,7 +108,7 @@ export function projectSessionForUI(session: Session): Session {
   }
 
   type ToolEvent = { type: "start" | "end"; name: string; args?: Record<string, unknown>; result?: string; allowed?: boolean; status?: ToolResultStatus; metadata?: Record<string, unknown>; media?: ToolEndMedia };
-  type UIAssistant = ChatCompletionMessageParam & { _tools?: ToolEvent[]; _notices?: HandoffNotice[]; _at?: number };
+  type UIAssistant = ChatCompletionMessageParam & { _tools?: ToolEvent[]; _notices?: HandoffNotice[]; _at?: number; _files?: TurnFileRef[] };
 
   const messages: ChatCompletionMessageParam[] = [];
   // One assistant bubble per turn — the SAME shape the live UI persists
@@ -129,6 +131,9 @@ export function projectSessionForUI(session: Session): Session {
     if (pendingTools.length > 0) out._tools = pendingTools;
     if (pendingNotices.length > 0) out._notices = pendingNotices;
     if (pendingAt !== undefined) out._at = pendingAt;
+    // The files the reply names, as its live `done` carried them (a device
+    // reloading the chat draws the same ones).
+    if (pendingText.length > 0) out._files = filesNamedInReply(out.content as string);
     messages.push(out);
     pendingTools = [];
     pendingText = [];

@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 74 top-level dirs · 74 live · 0 with no live importer · 2200 non-test source files · 59 oversized · 277 nearing the size cap.
+**Totals:** 74 top-level dirs · 74 live · 0 with no live importer · 2202 non-test source files · 59 oversized · 277 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -23,13 +23,13 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/security/` | 173 | 67 | XL | 2 |
 | `src/tools/` | 151 | 269 | XL | 6 |
 | `src/tool-execution/` | 109 | 93 | XL | 2 |
-| `src/workspace/` | 99 | 3 | M |  |
+| `src/workspace/` | 102 | 4 | M |  |
 | `src/canonical-loop/` | 96 | 302 | XL | 6 |
 | `src/util/` | 87 | 5 | S |  |
 | `src/providers/` | 80 | 28 | L | 1 |
 | `src/session/` | 79 | 15 | L |  |
 | `src/memory/` | 68 | 164 | XL | 1 |
-| `src/data-lineage/` | 62 | 12 | L |  |
+| `src/data-lineage/` | 63 | 12 | L |  |
 | `src/agency/` | 55 | 41 | XL |  |
 | `src/browser/` | 55 | 95 | XL | 5 |
 | `src/chat-ws/` | 53 | 24 | L |  |
@@ -37,9 +37,9 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/local-runtimes/` | 45 | 28 | XL |  |
 | `src/threat/` | 43 | 13 | L |  |
 | `src/auth/` | 38 | 11 | L |  |
+| `src/broker-transport/` | 32 | 52 | XL |  |
 | `src/inbox/` | 31 | 8 | M |  |
 | `src/agent-store/` | 30 | 8 | M | 1 |
-| `src/broker-transport/` | 29 | 51 | XL |  |
 | `src/context-manager/` | 29 | 16 | M |  |
 | `src/context/` | 28 | 11 | M |  |
 | `src/agent-request/` | 27 | 18 | L | 3 |
@@ -387,6 +387,7 @@ job. Comments are free: never cut them to fit.
 - `src/auto-build/loop/run.ts#runChunksInOrder` — 90+ own code lines (cap 100)
 - `src/auto-build/orchestrator/manager.ts#startOrchestration` — 90+ own code lines (cap 100)
 - `src/autopilot/start.ts#startAutopilot` — 90+ own code lines (cap 100)
+- `src/broker-transport/vendor/chat.ts#parseEvent` — 90+ own code lines (cap 100)
 - `src/canonical-loop/adapters/anthropic-transport.ts#stream` — 90+ own code lines (cap 100)
 - `src/canonical-loop/adapters/anthropic.ts#AnthropicAdapter.runTurn` — 90+ own code lines (cap 100)
 - `src/canonical-loop/adapters/codex.ts#CodexAdapter.runTurn` — 90+ own code lines (cap 100)
@@ -426,7 +427,6 @@ job. Comments are free: never cut them to fit.
 - `src/agents/tools.ts#createAgentTools` — 80+ own code lines (cap 100)
 - `src/auth/index.ts#createServer:callback` — 80+ own code lines (cap 100)
 - `src/auto-build/loop/parallel-waves.ts#runBatch` — 80+ own code lines (cap 100)
-- `src/broker-transport/vendor/chat.ts#parseEvent` — 80+ own code lines (cap 100)
 - `src/canonical-loop/adapters/canonical-to-transport.ts#canonicalToTransport` — 80+ own code lines (cap 100)
 - `src/canonical-loop/agent-runner/runtime-surface.ts#rehydrateAgentRuntimeSurface` — 80+ own code lines (cap 100)
 - `src/canonical-loop/chat-runner/seed-messages.ts#seedOpMessages` — 80+ own code lines (cap 100)

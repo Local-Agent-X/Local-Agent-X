@@ -29,6 +29,7 @@ export * from "./chunks.js";
 export * from "./tunnel.js";
 export * from "./chat.js";
 export * from "./file-change.js";
+export * from "./turn-files.js";
 export * from "./card.js";
 export * from "./progress.js";
 export * from "./approval.js";

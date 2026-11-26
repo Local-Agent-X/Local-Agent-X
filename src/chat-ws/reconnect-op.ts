@@ -10,6 +10,7 @@ import type { WebSocket } from "ws";
 import { createLogger } from "../logger.js";
 import { sendFrame } from "./frames.js";
 import { isSeededHistoryRow } from "../canonical-loop/public/message-ids.js";
+import { filesNamedInReply } from "../workspace/named-files.js";
 
 const logger = createLogger("chat-ws");
 
@@ -52,6 +53,11 @@ export async function handleReconnectOp(ws: WebSocket, sessionId: string, opId: 
   try {
     const { reconnectOp, OP_EVENTS_FROM_BEGINNING, readOpMessages } =
       await import("../canonical-loop/index.js");
+    // The files the op's reply names, as the live `done` carries them, so a
+    // device that missed it still draws them.
+    const filesOfOp = (id: string) => {
+      try { return filesNamedInReply(joinAssistantText(readOpMessages(id))); } catch { return []; }
+    };
     const result = await reconnectOp(opId, sinceSeq < 0 ? OP_EVENTS_FROM_BEGINNING : sinceSeq, (event) => {
       // Translate canonical events to chat ServerEvents and send ONLY
       // to this WS (not broadcast — other connections didn't ask for
@@ -64,7 +70,7 @@ export async function handleReconnectOp(ws: WebSocket, sessionId: string, opId: 
           sendFrame(ws, {
             type: "event",
             sessionId,
-            event: { type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } },
+            event: { type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, files: filesOfOp(opId) },
             _opId: opId,
             _seq: event.seq,
           });

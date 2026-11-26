@@ -323,7 +323,8 @@ describe("runCanonicalChat — terminal vs recovered stream errors", () => {
 		});
 		// The UI still gets the error event, and done still follows it.
 		expect(primaryEventProxy).toHaveBeenCalledWith({ type: "error", message: "http_400: text content blocks must be non-empty" });
-		expect(wrappedOnEvent).toHaveBeenLastCalledWith({ type: "done", usage });
+		// The reply names no workspace file, so the files it carries are none.
+		expect(wrappedOnEvent).toHaveBeenLastCalledWith({ type: "done", usage, files: [] });
 	});
 
 	it("a RECOVERED error (compact-and-retry; op succeeded) is never narrated", async () => {

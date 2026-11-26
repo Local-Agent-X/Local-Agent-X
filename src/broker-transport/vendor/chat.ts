@@ -11,6 +11,7 @@ import { parseApprovalEvent } from "./approval.js";
 import { parseFileChange } from "./file-change.js";
 import { parseCardMetadata, type ChatCard } from "./card.js";
 import { parsePlanMetadata, parseSessionOfferMetadata, parseWrapUpMetadata, type PlanStep, type SessionOffer, type WrapUp } from "./progress.js";
+import { parseTurnFiles, type TurnFileRef } from "./turn-files.js";
 import type { FileChange } from "./file-change.js";
 import type { ApprovalRequestedEvent, ApprovalResolvedEvent, ApprovalResponseFrame, ApprovalTimeoutEvent } from "./approval.js";
 
@@ -64,7 +65,14 @@ export type ToolEndEvent = {
   sessionOffer?: SessionOffer;
 };
 /** The turn finished. `opId` names it, so a resubscribe can say it already holds it. */
-export type DoneEvent = { type: "done"; usage: TurnUsage; opId?: string };
+export type DoneEvent = {
+  type: "done";
+  usage: TurnUsage;
+  opId?: string;
+  /** The workspace files the reply names, as the desktop resolved them (turn-files.ts).
+   *  Absent from a desktop that predates it; a device then reads the text itself. */
+  files?: TurnFileRef[];
+};
 /** The turn stopped early (abort, ceiling or loop guard). */
 export type StoppedEvent = { type: "stopped"; reason: string; debug?: string; firedBy?: string };
 export type ChatErrorEvent = { type: "error"; message: string };
@@ -238,6 +246,8 @@ function parseEvent(raw: Record<string, unknown>): ChatServerEvent | null {
       };
       const opId = asString(raw.opId);
       if (opId !== null) ev.opId = opId;
+      const files = parseTurnFiles(raw.files);
+      if (files !== null) ev.files = files;
       return ev;
     }
     case "stopped": {

@@ -11,6 +11,7 @@ import { createLogger } from "../../../logger.js";
 import { markTurnPersisted } from "../../../chat-ws/state.js";
 import { appendTurnToSession } from "../append-turn.js";
 import { claimChatTurn, releaseChatTurn } from "./orphaned-turn.js";
+import { filesNamedInReply } from "../../../workspace/named-files.js";
 
 const logger = createLogger("routes.chat.canonical-run");
 
@@ -131,7 +132,7 @@ export async function runCanonicalChat(input: CanonicalRunInput): Promise<Canoni
     // (session save + memory chunk indexing) ran AFTER this and added 2-3s of
     // phantom streaming to the UI — worse as the session grows. Persistence is
     // server-only state and the client never waits on it, so decouple them.
-    wrappedOnEvent({ type: "done", usage: canonicalUsage });
+    wrappedOnEvent({ type: "done", usage: canonicalUsage, files: filesNamedInReply(getFullResponseText()) });
 
     // The stream can end gracefully even on abort (the loop just stops
     // yielding), so detect interruption here too — not only in catch.

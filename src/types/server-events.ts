@@ -1,4 +1,5 @@
 import type { ToolResultStatus, AgentTurn } from "../types.js";
+import type { TurnFileRef } from "../broker-transport/vendor/turn-files.js";
 
 // ── Server Types ──
 
@@ -123,7 +124,9 @@ export type ServerEvent =
   // as a "usage" type — the driver converts it to the existing agent-update
   // broadcast. Additive/optional; consumers that don't handle it ignore it.
   | { type: "usage"; totalTokens: number }
-  | { type: "done"; usage: AgentTurn["usage"]; opId?: string }
+  // `files`: the workspace files the reply names, resolved once here
+  // (workspace/named-files.ts) so a device draws them instead of guessing.
+  | { type: "done"; usage: AgentTurn["usage"]; opId?: string; files?: TurnFileRef[] }
   // Out-of-band notice that the turn stopped early (middleware abort,
   // wall-clock ceiling, stale evidence, loop detection, etc.). The UI
   // renders this as a small inline note BELOW the message, NOT as

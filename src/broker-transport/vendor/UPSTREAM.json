@@ -3,7 +3,7 @@
   "files": {
     "protocol.ts": {
       "upstream": "packages/protocol/src/index.ts",
-      "sha256": "b7294d2bf69b39db235eb78bee76aa09f51ec0f39c54c8d24795e570424c8977"
+      "sha256": "fb7518003734c5305e4ca6af19afd1141f8060638dd1762272478606044eda29"
     },
     "guards.ts": {
       "upstream": "packages/protocol/src/guards.ts",
@@ -23,7 +23,7 @@
     },
     "chat.ts": {
       "upstream": "packages/protocol/src/chat.ts",
-      "sha256": "e6071e708c15c8739c05b61373782e0076f64e416052fc8378ff0a9f57ceaee5"
+      "sha256": "d90c9c7e71d92f48306be7c6c6b9a02ecfff7b100ff2548813ffbe2e1c1933ba"
     },
     "approval.ts": {
       "upstream": "packages/protocol/src/approval.ts",
@@ -116,6 +116,10 @@
     "broker-liveness.ts": {
       "upstream": "packages/client/src/broker-liveness.ts",
       "sha256": "2388f960cb12ee01f47b0f30d5513b8149d85a837d7ce4a516b2e484146a1696"
+    },
+    "turn-files.ts": {
+      "upstream": "packages/protocol/src/turn-files.ts",
+      "sha256": "11cef20fe573cd812e32793d0b9032c9846caf43bab380e5b7c47c32f00354be"
     }
   }
 }

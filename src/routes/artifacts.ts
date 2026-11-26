@@ -19,7 +19,7 @@ import { declaredPaths, pathSpecsForCall } from "../tool-registry.js";
 import { signServedMediaPath } from "../server/agent-file-links.js";
 import { workspaceRoot } from "../config.js";
 import { resolveAgentPathFrom } from "../workspace/paths.js";
-import { isAbsolute, relative, sep } from "node:path";
+import { workspaceFilesAddress } from "../workspace/named-files.js";
 
 export interface ArtifactItem {
   /** image | video | file | link */
@@ -49,9 +49,7 @@ const SERVED_MEDIA_REF = /^\/(?:images|videos|uploads)\/[^?#]+$/;
  *  nothing (2026-11-23). */
 function workspaceFilesUrl(ref: string, workspace: string): string | undefined {
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(ref) || ref.startsWith("/files/")) return undefined;
-  const rel = relative(workspace, resolveAgentPathFrom(workspace, ref));
-  if (!rel || rel === ".." || rel.startsWith(".." + sep) || isAbsolute(rel)) return undefined;
-  return "/files/" + rel.split(sep).map(encodeURIComponent).join("/");
+  return workspaceFilesAddress(workspace, resolveAgentPathFrom(workspace, ref));
 }
 
 /** The item as sent, with what the UI opens for it. */

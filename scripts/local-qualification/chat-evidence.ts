@@ -142,8 +142,21 @@ function isAppendStream(event: Record<string, unknown>): boolean {
     && typeof event.delta === "string";
 }
 
+// A done may carry the workspace files the reply names (workspace/named-files.ts):
+// a list of exact { path, name, kind } records, each a /files address. Nothing
+// else rides along, and nothing in it may carry the read nonce.
+function isTurnFiles(value: unknown): boolean {
+  return Array.isArray(value) && !containsNonce(value) && value.every((ref) => isPlainRecord(ref)
+    && hasExactOwnKeys(ref, ["path", "name", "kind"])
+    && typeof ref.path === "string" && ref.path.startsWith("/files/")
+    && typeof ref.name === "string"
+    && (ref.kind === "image" || ref.kind === "video" || ref.kind === "file"));
+}
+
 function isDone(event: Record<string, unknown> | undefined): boolean {
-  if (!event || !hasExactOwnKeys(event, ["type", "usage"]) || !isPlainRecord(event.usage)) return false;
+  const keys = event !== undefined && Object.hasOwn(event, "files") ? ["type", "usage", "files"] : ["type", "usage"];
+  if (!event || !hasExactOwnKeys(event, keys) || !isPlainRecord(event.usage)) return false;
+  if (keys.length === 3 && !isTurnFiles(event.files)) return false;
   if (!hasExactOwnKeys(event.usage, ["promptTokens", "completionTokens", "totalTokens"])) return false;
   return event.type === "done"
     && isNonnegativeInteger(event.usage.promptTokens)

@@ -216,6 +216,28 @@ describe("local qualification workspace-read evidence", () => {
     expect(chatEvidence(events).readNonceSeen).toBe(false);
   });
 
+  // A done carries the workspace files the reply names (workspace/named-files.ts):
+  // that list in its exact shape, and nothing else, may ride along.
+  it("accepts done carrying the reply's resolved files, none or some", () => {
+    for (const files of [[], [{ path: "/files/qualification-note.txt", name: "qualification-note.txt", kind: "file" }]]) {
+      const events = readEvents();
+      events[5] = { ...events[5], files };
+      expect(chatEvidence(events).readNonceSeen).toBe(true);
+    }
+  });
+
+  it.each([
+    ["a list that is not one", "x"],
+    ["a file outside /files", [{ path: "/uploads/a.png", name: "a.png", kind: "image" }]],
+    ["an extra key in a file", [{ path: "/files/a.png", name: "a.png", kind: "image", extra: true }]],
+    ["an unknown kind", [{ path: "/files/a.png", name: "a.png", kind: "model" }]],
+    ["the nonce in a file", [{ path: "/files/a.png", name: READ_NONCE, kind: "image" }]],
+  ])("rejects done files carrying %s", (_label, files) => {
+    const events = readEvents();
+    events[5] = { ...events[5], files };
+    expect(chatEvidence(events).readNonceSeen).toBe(false);
+  });
+
   it("rejects done carrying assistant content", () => {
     const events = readEvents();
     events[5] = { ...events[5], delta: READ_NONCE };

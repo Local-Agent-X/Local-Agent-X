@@ -7,7 +7,7 @@ import { canHaveLead } from "./lead-chat.js";
 import { askLead, askLeadBuildCall, isLeadDecisionPending, type LeadSituation } from "./lead-decisions.js";
 import { LEAD_ROLE } from "./lead-role.js";
 import { buildDecideTool, readDecision } from "./build-decide-tool.js";
-import { SKEPTIC_BREAK_GROUNDS } from "../chunk-review/skeptic-bar.js";
+import { FINISH_FIX_BREAK_GROUNDS, SKEPTIC_BREAK_GROUNDS } from "../chunk-review/skeptic-bar.js";
 
 const situation: LeadSituation = {
   chunk: { number: 1, title: "Android foundation", slice: "s", doneWhen: "fixtures prove the size gate", scenarios: "—" },
@@ -71,6 +71,13 @@ describe("the build lead", () => {
     expect(LEAD_ROLE).toContain('"owed"');
     expect(LEAD_ROLE).toContain("Never park for that");
     expect(LEAD_ROLE).toContain('"overrule"');
+  });
+
+  // label-check-sol's finish fixes (2026-11-25): the lead answered "continue"
+  // to each fresh problem the skeptic found anywhere in the app, two hours a fix.
+  it("holds a finish fix to what it was given, with the skeptic's finish-fix bar", () => {
+    for (const ground of FINISH_FIX_BREAK_GROUNDS) expect(LEAD_ROLE).toContain(ground);
+    expect(LEAD_ROLE).toContain("already in the app before the fix");
   });
 
   it("a build call takes only the answers it lists; build_decide refuses the rest and the lead can answer again", async () => {

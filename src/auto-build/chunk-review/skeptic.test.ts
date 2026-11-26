@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { SKEPTIC_BAR_BLOCK, SKEPTIC_BREAK_GROUNDS, SKEPTIC_RULE_REACH } from "./skeptic-bar.js";
+import { FINISH_FIX_BREAK_GROUNDS, SKEPTIC_BAR_BLOCK, SKEPTIC_BREAK_GROUNDS, SKEPTIC_RULE_REACH } from "./skeptic-bar.js";
 
 const agent = vi.hoisted(() => ({
   result: { stdout: "", exitCode: 0, durationMs: 1 } as { stdout: string; exitCode: number; durationMs: number; error?: string },
@@ -121,6 +121,44 @@ describe("buildSkepticTask", () => {
     expect(task).toContain("git diff abc1234");
     expect(task).toMatch(/Prove it wrong/);
     expect(task).toMatch(/beyond the contract is a follow-up, not a break/);
+  });
+});
+
+// A finish fix's skeptic checks the fix, not the whole app: re-attacking the
+// whole app after every fix round cost label-check-sol two hours per fix chunk
+// on problems that were there before the fix (2026-11-25).
+describe("buildSkepticTask for a finish fix", () => {
+  const splitHeading = (heading: string) => parsePlanText([
+    "# Plan", `## ${heading}`, "### Chunk 101201 — Stalled native write",
+    "- **Class:** trunk", "- **Slice:** recover from a stalled write.", "- **Depends on:** 1012",
+    "- **Scenarios:** —", "- **Done when:** a stalled write is reported.",
+  ].join("\n")).chunks[0];
+
+  it("gives a chunk the finish gates wrote, and a part split off one, the finish-fix bar", async () => {
+    const { fixChunksFor } = await import("../finish-gates/run.js");
+    const [fix] = fixChunksFor(1, { failed: [], unjudged: [] }, [
+      { persona: "unlucky", status: "ran", findings: [{ severity: "high", text: "a cancelled edit overwrites the saved medication" }] },
+    ] as never);
+    for (const c of [fix, splitHeading("Split from chunk 1012 — Finish fix 1: unlucky findings")]) {
+      const task = buildSkepticTask({ chunk: c, rawReport: "STATUS: done", preSha: "abc1234" });
+      expect(task).toContain("## This is a finish fix");
+      for (const ground of FINISH_FIX_BREAK_GROUNDS) expect(task).toContain(ground);
+      expect(task).toMatch(/already in the app before this chunk/);
+      expect(task).toMatch(/Prove it wrong by the finish-fix bar/);
+      expect(task).not.toMatch(/Prove it wrong against the contract above and the project's/);
+    }
+  });
+
+  it("leaves a plan chunk, and a plan chunk's split part numbered past 1000, on the contract bar", () => {
+    for (const c of [chunk, splitHeading("Split from chunk 10 — Native scan")]) {
+      const task = buildSkepticTask({ chunk: c, rawReport: "STATUS: done", preSha: "abc1234" });
+      expect(task).not.toContain("## This is a finish fix");
+      expect(task).toMatch(/Prove it wrong against the contract above/);
+    }
+  });
+
+  it("a crash, lost data or a security hole still holds a finish fix back", () => {
+    expect(FINISH_FIX_BREAK_GROUNDS).toContain(SKEPTIC_BREAK_GROUNDS[1]);
   });
 });
 

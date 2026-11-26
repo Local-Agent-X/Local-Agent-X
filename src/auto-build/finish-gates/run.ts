@@ -30,14 +30,12 @@ import type { ParsedChunk } from "../plan-parser.js";
 import type { EmitFn, LoopOptions, LoopResult } from "../loop/types.js";
 import { runBreakers, type BreakerResult } from "./breakers.js";
 import { askLeadBuildCall } from "../advisor/lead-decisions.js";
+import { FIX_CHUNK_BASE, FIX_CHUNK_PHASE, fixChunkTitle } from "./fix-chunk.js";
 
 const MAX_FIX_ROUNDS = 2;
 /** The ceiling on fix rounds when the build's lead asks for more. */
 const LEAD_FIX_ROUNDS = 4;
 const MAX_FIX_CHUNKS = 5;
-/** Fix chunks are numbered past any plan's, so their branches, set-aside
- *  records and events never collide with a plan chunk's. */
-const FIX_CHUNK_BASE = 1000;
 
 export interface SuiteJudging { failed: ScoreReport[]; unjudged: ScoreReport[]; note?: string }
 
@@ -95,7 +93,7 @@ export function fixChunksFor(round: number, suite: SuiteJudging, breakers: Break
   const chunks: ParsedChunk[] = [];
   const next = (title: string, slice: string, scenarios: string, doneWhen: string): void => {
     chunks.push({
-      number: FIX_CHUNK_BASE + round * 10 + chunks.length + 1, title: `Finish fix ${round}: ${title}`, phase: "Finish",
+      number: FIX_CHUNK_BASE + round * 10 + chunks.length + 1, title: fixChunkTitle(round, title), phase: FIX_CHUNK_PHASE,
       klass: "trunk", slice, dependsOn: [], scenarios, doneWhen, rawSection: "",
     });
   };

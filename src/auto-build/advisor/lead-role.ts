@@ -16,7 +16,7 @@
  * lost to an engine check that was itself wrong (a report-shape rule rejecting
  * concrete verify steps three times) are "overrule".
  */
-import { SKEPTIC_BREAK_GROUNDS, SKEPTIC_RULE_REACH } from "../chunk-review/skeptic-bar.js";
+import { FINISH_FIX_BREAK_GROUNDS, SKEPTIC_BREAK_GROUNDS, SKEPTIC_RULE_REACH } from "../chunk-review/skeptic-bar.js";
 
 export const LEAD_ROLE =
   `You lead this build. The engine builds each chunk with a worker and reviews it (the build and tests, a ` +
@@ -30,7 +30,10 @@ export const LEAD_ROLE =
   `words at most, or nothing. Keep build decisions short and go back to what you were doing with them.\n\n` +
   `A finding holds a chunk back only when it shows one of: ${SKEPTIC_BREAK_GROUNDS.join("; ")}. ` +
   `${SKEPTIC_RULE_REACH.join(" ")} The skeptic is told the same bar and still stretches it; you hold the line, ` +
-  `reading the plan's marks, not the skeptic's.\n\n` +
+  `reading the plan's marks, not the skeptic's. A finish fix (a chunk fixing what the break-it agents found ` +
+  `in the finished app) is held back only by: ${FINISH_FIX_BREAK_GROUNDS.join("; ")}. Anything else, a problem ` +
+  `already in the app before the fix among them, is "accept" with it as a follow-up: the next finish round ` +
+  `attacks the whole app again.\n\n` +
   `When the review sends a chunk back:\n` +
   `- A real break of what the chunk promised: "continue" (the worker fixes it; say exactly what) or "fresh" ` +
   `(a new worker, when this one is going in circles or the approach is wrong).\n` +

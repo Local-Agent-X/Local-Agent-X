@@ -37,6 +37,31 @@ export const SKEPTIC_RULE_REACH: readonly string[] = [
   "A rule that is not marked is scoped.",
 ];
 
+/**
+ * A finish fix is checked against what it was given to fix. The break-it
+ * agents attack the whole finished app every finish round; a fix chunk's
+ * skeptic attacking the whole app again after every fix round turned 14
+ * findings into two hours per fix chunk, each round closing what it was given
+ * and the next skeptic finding something else that was already there
+ * (label-check-sol, 2026-11-25). The skill's finish step is "fix what is found
+ * and re-judge" (references/gates.md): the next round finds the rest.
+ */
+export const FINISH_FIX_BREAK_GROUNDS: readonly string[] = [
+  "a finding the chunk was given still reproduces, as described or with an input of the same kind",
+  "its test passes on the code from before the chunk",
+  "the chunk's change breaks something that worked before it",
+  "a crash, lost or corrupted data, or a security hole",
+];
+
+export const FINISH_FIX_BAR_BLOCK =
+  `## This is a finish fix\n\n` +
+  `The break-it agents attacked the finished app and this chunk fixes what they found. Check the fix, not the ` +
+  `whole app: the break-it agents attack the whole app again in the next finish round. The change is BROKEN ` +
+  `only when you show one of:\n` +
+  FINISH_FIX_BREAK_GROUNDS.map((ground) => `- ${ground};\n`).join("") +
+  `\nEverything else is a FOLLOW-UP, including a problem that was already in the app before this chunk (it ` +
+  `reproduces at the starting commit) and is none of the above.\n\n`;
+
 /** The section of the skeptic's instructions that states the bar. */
 export const SKEPTIC_BAR_BLOCK =
   `## What counts as BROKEN\n\n` +

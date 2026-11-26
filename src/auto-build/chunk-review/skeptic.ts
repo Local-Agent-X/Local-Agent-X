@@ -12,7 +12,8 @@
  * What it may hold the chunk to is the chunk's contract (skeptic-bar.ts): a
  * BROKEN verdict names its ground, and what the skeptic found beyond the
  * contract comes back as follow-ups, which are recorded and never hold the
- * chunk back.
+ * chunk back. A finish fix is held to what it was given to fix
+ * (FINISH_FIX_BAR_BLOCK); the next finish round attacks the whole app again.
  *
  * Fail direction:
  *   - The skeptic answered with no parseable verdict → broken. An agent that
@@ -30,6 +31,8 @@ import type { ParsedChunk } from "../plan-parser.js";
 import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { runChunkAgent, SKEPTIC_PROBE_DIR } from "../agents/chunk-runner.js";
+import { isFinishFixChunk } from "../finish-gates/fix-chunk.js";
+import { FINISH_FIX_BAR_BLOCK } from "./skeptic-bar.js";
 
 export type SkepticStatus = "broken" | "holds" | "not-run";
 
@@ -66,19 +69,25 @@ const MAX_REPORT_CHARS = 4_000;
 export function buildSkepticTask(input: Pick<SkepticInput, "chunk" | "rawReport" | "preSha">): string {
   const { chunk } = input;
   const report = input.rawReport.trim().slice(-MAX_REPORT_CHARS) || "(the builder returned no report)";
+  const finishFix = isFinishFixChunk(chunk);
   return (
     `Chunk ${chunk.number}: ${chunk.title} (${chunk.klass})\n\n` +
     `## What the chunk had to do\n\n` +
     `Slice: ${chunk.slice || "(none stated)"}\n\n` +
     `Done when:\n${chunk.doneWhen || "(none stated)"}\n\n` +
     `## The builder's claim (its final report)\n\n${report}\n\n` +
+    (finishFix ? FINISH_FIX_BAR_BLOCK : "") +
     `## The change\n\n` +
     `The chunk started from commit \`${input.preSha}\`. Its work is everything since: ` +
     `\`git diff ${input.preSha}\` plus any new files \`git status\` lists as untracked.\n\n` +
-    `This change says it is done and correct. Prove it wrong against the contract above and the ` +
-    `project's \`spec/\`: the input it breaks on, the case it missed, the seam it forked, the test ` +
-    `that cannot fail. What you find beyond the contract is a follow-up, not a break. End with the ` +
-    `VERDICT, GROUND, FINDING and FOLLOW_UPS lines.`
+    (finishFix
+      ? `This change says it fixes what it was given. Prove it wrong by the finish-fix bar above: the ` +
+        `finding that still reproduces, the test that passes without the fix, what the fix broke. ` +
+        `Anything else you find is a follow-up, not a break. `
+      : `This change says it is done and correct. Prove it wrong against the contract above and the ` +
+        `project's \`spec/\`: the input it breaks on, the case it missed, the seam it forked, the test ` +
+        `that cannot fail. What you find beyond the contract is a follow-up, not a break. `) +
+    `End with the VERDICT, GROUND, FINDING and FOLLOW_UPS lines.`
   );
 }
 

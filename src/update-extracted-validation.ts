@@ -2,12 +2,12 @@
 
 import type { ChildProcess } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { rm } from "node:fs/promises";
 import { join } from "node:path";
 
 import { runDesktopTscBuildAsync } from "./agency/worktree.js";
 import { linkDirectoryInto, unlinkSharedJunctions } from "./agency/worktree-junctions.js";
 import { createLogger } from "./logger.js";
+import { removeTreeRetrying } from "./util/remove-tree.js";
 import { gateBuildAtAsync, gateBindAt, gateSmoke, killProbe, runNpmAt, SKIPPED_GATE, BUILD_TIMEOUT_MS, type GateResult } from "./self-edit/sandbox-gates.js";
 import { pickProbePort } from "./self-edit/sandbox-naming.js";
 import type { UpdateGates } from "./update-pipeline.js";
@@ -26,16 +26,7 @@ export interface ExtractValidation {
 /** Windows can retain just-killed probe handles briefly; cleanup retries must
  * never decide whether an otherwise valid update succeeds. */
 export async function rmUpdatePathRetry(path: string, label: string): Promise<void> {
-  for (let attempt = 0; ; attempt++) {
-    try { await rm(path, { recursive: true, force: true }); return; }
-    catch (e) {
-      if (attempt >= 5) {
-        logger.warn(`[update] could not remove ${label} at ${path}: ${(e as Error).message}`);
-        return;
-      }
-      await new Promise(resolve => setTimeout(resolve, 600));
-    }
-  }
+  await removeTreeRetrying(path, (reason) => logger.warn(`[update] could not remove ${label} at ${path}: ${reason}`));
 }
 
 function dependencyFileContents(path: string): string {

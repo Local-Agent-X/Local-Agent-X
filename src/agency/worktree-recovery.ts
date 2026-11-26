@@ -13,7 +13,7 @@ import {
   pendingRecoveredWorktrees, sameBranchFamily, type WorktreeEntry, WORKTREE_BASE, worktreeRemoveArgs, worktreeSlotAvailable,
 } from "./worktree-core.js";
 import { unlinkAllShallowReparsePoints } from "./worktree-junctions.js";
-import { reapAppOwnWorktrees } from "./worktree-boot-sweep.js";
+import { reapAppOwnWorktrees, reapWorktreeRemnants } from "./worktree-boot-sweep.js";
 import { currentProcessIncarnation, processIncarnationIsLive } from "../persistence/process-incarnation.js";
 import { isSelfEditLockHeldByLiveProcess } from "../self-edit/global-lock.js";
 
@@ -403,6 +403,7 @@ export function sweepOrphanWorktreeJunctions(): Promise<void> {
   bootSweep ??= (async () => {
     if (await isSelfEditLockHeldByLiveProcess()) return;
     await reconcileWorktreeBase();
+    await reapWorktreeRemnants();
   })();
   return bootSweep;
 }

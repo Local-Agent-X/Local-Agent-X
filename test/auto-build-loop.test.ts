@@ -250,6 +250,9 @@ describe("runBuildLoop — halt path", () => {
     expect(resumed.events.filter(e => e.type === "chunk-landed").map(e => e.chunkNumber)).toEqual([1, 2]);
     const history = JSON.parse(readFileSync(join(projectDir, ".lax-build-history.json"), "utf-8"));
     expect(history.setAside ?? {}).toEqual({});
+    // Its kept branch is merged now and goes: label-check-sol kept five merged
+    // autobuild/ branches from runs like this (2026-11-25).
+    expect(git("branch --list autobuild/*")).toBe("");
   });
 
   // A restart after every chunk landed resumes with all of them landed

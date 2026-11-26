@@ -12,6 +12,7 @@ import { hasVanishedWorktreeAt, linkDirectoryInto, listCheckedOutBranches, unlin
 import { claimRecoveredWorktree, forgetWorktreeOwnership, ownsWorktree, registerWorktreeOwnership } from "./worktree-recovery.js";
 import { findMergeOverlaps, noteMerged, overlapSummary, type MergeOverlap } from "./merge-overlap.js";
 import { concludeResolvedMerge, type MergeConflictResolver } from "./worktree-merge-conflicts.js";
+import { removeTreeRetrying } from "../util/remove-tree.js";
 
 /** Cut `branch` at HEAD and check it out at `wtPath`. When the checkout is
  *  refused (a crashed run left a directory at the path), the branch just cut
@@ -211,6 +212,9 @@ export function cleanupWorktree(agentId: string): void {
     // next build has to work around it: say so, never "Cleaned up".
     if (existsSync(wt.path)) {
       logger.warn(`[worktree] ${agentId} could not be removed and is still on disk at ${wt.path}: ${(e as Error).message.split("\n")[0]}`);
+      // Git let it go and a held file stopped the delete: try again as the
+      // handles close (its junctions were unlinked above).
+      if (!existsSync(join(wt.path, ".git"))) void removeTreeRetrying(wt.path, (reason) => logger.warn(`[worktree] ${wt.path} is still on disk: ${reason}`));
     }
   }
 

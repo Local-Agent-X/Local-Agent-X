@@ -33,6 +33,7 @@ import { buildChunkWithRetry, type ChunkAttemptResult } from "./chunk-attempt.js
 import type { ParsedChunk } from "../plan-parser.js";
 import { clearSetAside } from "../failure-recovery.js";
 import { pickUpSetAsideWork } from "./carry-over.js";
+import { pruneMergedAgentBranches } from "../../agency/worktree-junctions.js";
 import { anythingSetAside, createSetAsideLedger, endWithSetAside, holdBackWaiting, stopForSetAside, type SetAsideLedger } from "./set-aside.js";
 import { isSetAsideCase, setChunkAsideInTree } from "./tree-set-aside.js";
 import { isPhaseGatePause } from "../chunk-review/index.js";
@@ -283,6 +284,8 @@ async function runChunksInOrder(run: {
     chunksCommitted = handled.chunksCommitted;
     landedThisRun.push(chunk.number);
     clearSetAside(opts.projectDir, chunk.number);
+    // Its kept branches are merged now: the engine's own merged branches go (worktree-junctions.ts).
+    pruneMergedAgentBranches(opts.projectDir);
     opts.onChunkSettled?.(chunk.number);
     phasePauses.landed(chunk, finalOutcome, !gateOwed);
     const phase = await phasePauses.scoreFinished({ opts, totalChunks, emit, events, outcomes }, chunksCommitted);

@@ -13,11 +13,12 @@
  * WORKTREE_BASE (the signature of a real working checkout, not a fresh install).
  */
 
-import { realpathSync } from "node:fs";
-import { resolve, sep } from "node:path";
+import { existsSync, lstatSync, readdirSync, realpathSync } from "node:fs";
+import { join, resolve, sep } from "node:path";
 
 import { git, logger, WORKTREE_BASE } from "./worktree-core.js";
-import { pruneMergedAgentBranches } from "./worktree-junctions.js";
+import { pruneMergedAgentBranches, unlinkAllShallowReparsePoints } from "./worktree-junctions.js";
+import { removeTreeRetrying } from "../util/remove-tree.js";
 
 /**
  * Case-normalized realpath, falling back to a plain resolve when the path is
@@ -84,3 +85,38 @@ export function reapAppOwnWorktrees(repoRoot: string | null = resolveAppRepoRoot
   try { git(["worktree", "prune"], repoRoot); } catch { /* current repo unavailable */ }
   pruneMergedAgentBranches(repoRoot);
 }
+
+/**
+ * Delete what is left of worktrees git has already removed. `git worktree
+ * remove` drops the `.git` link first and then the files; on Windows a file a
+ * just-killed process still held stops it there, and the folder stayed for
+ * good: the recovery sweep reads a folder with no `.git` as "not a verifiable
+ * git worktree" and leaves it. Five such folders held 2.4 GB of app copies and
+ * node_modules in Temp on 2026-11-25.
+ *
+ * A folder with a `.git` is a worktree, live or recoverable, and is the
+ * recovery sweep's (reconcileWorktreeBase); one that is itself a link is never
+ * followed. Junctions inside (a node_modules pointing at a parent's real
+ * dependencies) are unlinked before the delete, and a folder holding one that
+ * will not unlink is left alone, as cleanupWorktree does.
+ */
+export async function reapWorktreeRemnants(base = WORKTREE_BASE): Promise<string[]> {
+  if (!existsSync(base)) return [];
+  let names: string[];
+  try { names = readdirSync(base); } catch { return []; }
+  const removed: string[] = [];
+  for (const name of names) {
+    const path = join(base, name);
+    try { if (!lstatSync(path).isDirectory()) continue; } catch { continue; }
+    if (existsSync(join(path, ".git"))) continue;
+    const stuck = unlinkAllShallowReparsePoints(path);
+    if (stuck.length) {
+      logger.warn(`[worktree] leftover ${path} kept: a link inside would not unlink (${stuck.join(", ")})`);
+      continue;
+    }
+    if (await removeTreeRetrying(path, (reason) => logger.warn(`[worktree] leftover ${path} could not be deleted: ${reason}`))) removed.push(path);
+  }
+  if (removed.length) logger.info(`[worktree] deleted ${removed.length} leftover folder(s) of removed worktrees: ${removed.join(", ")}`);
+  return removed;
+}
+

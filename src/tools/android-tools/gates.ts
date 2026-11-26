@@ -5,7 +5,7 @@
  */
 
 import type { ToolResult } from "../../types.js";
-import { checkAndroidSdk, holdDevice, resolveSerial, HOLD_IDLE_MS } from "../../android/index.js";
+import { checkAndroidSdk, holdDevice, resolveSerial, watchDevice, HOLD_IDLE_MS } from "../../android/index.js";
 import { getSessionOwner } from "../../browser/session-owner-registry.js";
 import { sessionIdOf } from "../../tool-execution/internal-args.js";
 import { blocked, err } from "../result-helpers.js";
@@ -46,7 +46,12 @@ export async function deviceHoldGate(action: string, args: Record<string, unknow
   }
   const chat = getSessionOwner(sessionId)?.browserSessionId ?? sessionId;
   const heldBy = holdDevice(serial, chat);
-  if (!heldBy) return null;
+  if (!heldBy) {
+    // The device the agent is driving is the one the app's Android tab shows,
+    // whoever booted it (android/frame-stream.ts).
+    watchDevice(serial);
+    return null;
+  }
   return err(
     `Android device ${serial} is in use by another chat. It frees up ${Math.round(HOLD_IDLE_MS / 60_000)} minutes after that chat last used it. ` +
     "Do not start another emulator to get around this: this app tracks and shows one. Do the parts of the task that need no device, then try again, or tell the user the device is busy.",

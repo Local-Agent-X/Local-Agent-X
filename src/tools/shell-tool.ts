@@ -14,6 +14,7 @@ import { inboxWithheldOutput } from "../inbox/producers.js";
 import { cwdOf, onEventOf, onProgressOf, sessionIdOf, toolCallIdOf } from "../tool-execution/internal-args.js";
 import { holdForSendNow, movedToBackgroundResult } from "./shell-handoff.js";
 import { vendorDriftHint } from "../protocols/vendor-drift.js";
+import { shellEmulatorHint } from "./android-tools/shell-emulator-hint.js";
 
 type WithheldRun = { secrets: ResolvedSecretEnv & { withheld: string }; secretEnv: SecretEnv; command: string; key: string };
 
@@ -134,6 +135,22 @@ function failureNotices(run: {
     // A failed test run: which tests, where and why, ahead of the runner's own
     // report, which a long run's cut can leave unread (test-failure-summary.ts).
     failingTestsSummary(out),
+  ].filter(Boolean).join("\n");
+}
+
+/**
+ * What a command that exited 0 still needs said, one line per finding.
+ */
+function successNotices(stderr: string, cwd: string, command: string): string {
+  return [
+    // A `workspace/…` path that failed inside a `… || echo "not found"`
+    // exits 0 with the failure only in stderr; the model then believes
+    // the fallback ("the CLI is not installed") — say what really happened.
+    workspacePrefixHint(stderr, cwd, undefined, command) ?? quotedGlobHint(command),
+    // An emulator booted from here opens a window the app does not show
+    // (android-tools/shell-emulator-hint.ts). It is backgrounded, so the
+    // command exits 0 at once.
+    shellEmulatorHint(command),
   ].filter(Boolean).join("\n");
 }
 
@@ -337,11 +354,8 @@ export const bashTool: ToolDefinition = {
         const content = stdout
           ? (stderr ? stdout + "\n[stderr]\n" + stderr : stdout)
           : `[exit ${code === null ? "?" : code} in ${durationMs}ms — command finished with no captured output. If this was a CLI that writes progress to a TTY (ollama, npm install, winget), verify via filesystem or its REST API rather than re-running.]`;
-        // A `workspace/…` path that failed inside a `… || echo "not found"`
-        // exits 0 with the failure only in stderr; the model then believes
-        // the fallback ("the CLI is not installed") — say what really happened.
-        const prefixNotice = workspacePrefixHint(stderr, cwd, undefined, command) ?? quotedGlobHint(command);
-        return ok((prefixNotice ? prefixNotice + "\n" : "") + content, {
+        const notices = successNotices(stderr, cwd, command);
+        return ok((notices ? notices + "\n" : "") + content, {
           exit_code: code,
           duration_ms: durationMs,
           stderr: stderr || undefined,

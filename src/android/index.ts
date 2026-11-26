@@ -14,5 +14,5 @@ export {
 } from "./adb.js";
 export { listAvds, startEmulator, stopEmulator, runningEmulators } from "./emulator.js";
 export { installAndroidSdk, getSdkStatus, type InstallProgress } from "./sdk-installer.js";
-export { startFrameStream, type FrameStreamHandle } from "./frame-stream.js";
+export { watchDevice, unwatchDevice, watchedDevices, WATCH_LEASE_MS } from "./frame-stream.js";
 export { holdDevice, deviceHolder, releaseDevice, HOLD_IDLE_MS } from "./device-hold.js";

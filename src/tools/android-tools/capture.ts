@@ -7,7 +7,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ToolResult } from "../../types.js";
-import { resolveSerial, screenshot as adbScreenshot } from "../../android/index.js";
+import { resolveSerial, screenshot as adbScreenshot, watchDevice } from "../../android/index.js";
 import { getLaxDir } from "../../lax-data-dir.js";
 import { err } from "../result-helpers.js";
 
@@ -29,6 +29,8 @@ async function encodeInlineJpeg(buffer: Buffer): Promise<{ b64: string } | { err
 
 export async function handleScreenshot(args: Record<string, unknown>): Promise<ToolResult> {
   const serial = await resolveSerial(args.device ? String(args.device) : undefined);
+  // What the agent is looking at, the user can watch (android/frame-stream.ts).
+  watchDevice(serial);
   return deviceScreenshotResult(await adbScreenshot(serial), "android", serial);
 }
 

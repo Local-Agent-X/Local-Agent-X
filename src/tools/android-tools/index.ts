@@ -9,6 +9,7 @@
  *   interact.ts       — tap, swipe, type_text, key_event
  *   apps.ts           — install_apk, launch_app, list_apps, port_forward, open_url
  *   capture.ts        — screenshot
+ *   shell-emulator-hint.ts — the note on a shell command that boots an emulator itself
  */
 
 import type { ToolDefinition } from "../../types.js";

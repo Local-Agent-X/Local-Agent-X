@@ -7,7 +7,7 @@
 
 import type { RouteHandler } from "../../server-context.js";
 import { jsonResponse, readBody } from "../../server-utils.js";
-import { checkAndroidSdk, installAndroidSdk, listDevices, startEmulator, stopEmulator, keyEvent, deviceHolder, releaseDevice } from "../../android/index.js";
+import { checkAndroidSdk, installAndroidSdk, listDevices, startEmulator, stopEmulator, keyEvent, deviceHolder, releaseDevice, watchDevice } from "../../android/index.js";
 
 interface InstallState {
   running: boolean;
@@ -47,10 +47,16 @@ export const handleAndroidRoutes: RouteHandler = async (method, url, req, res, c
   // the UI's Start/Stop button is just another caller, not a parallel path.
 
   // Each device with the chat whose agent is driving it, if one is
-  // (android/device-hold.ts), so the tab can say whose it is.
+  // (android/device-hold.ts), so the tab can say whose it is. `view` is the
+  // device the open tab is showing: asking keeps its feed running
+  // (android/frame-stream.ts), so a phone that was plugged in before the app
+  // started shows without the agent touching it.
   if (method === "GET" && url.pathname === "/api/android/devices") {
     const titles = new Map(ctx.sessionStore.list().map((s) => [s.id, s.title]));
-    const devices = (await listDevices()).map((device) => {
+    const connected = await listDevices();
+    const view = url.searchParams.get("view");
+    if (view && connected.some((d) => d.serial === view && d.state === "device")) watchDevice(view);
+    const devices = connected.map((device) => {
       const sessionId = deviceHolder(device.serial);
       return sessionId ? { ...device, heldBy: { sessionId, title: titles.get(sessionId) || "another chat" } } : device;
     });

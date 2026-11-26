@@ -7,6 +7,7 @@ const adb = vi.hoisted(() => ({
   tap: vi.fn(async () => {}),
   screenshot: vi.fn(async () => Buffer.from("png")),
   resolveSerial: vi.fn(async (serial?: string) => serial ?? "emulator-5554"),
+  watchDevice: vi.fn(),
 }));
 vi.mock("../../android/index.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../android/index.js")>()),
@@ -14,6 +15,7 @@ vi.mock("../../android/index.js", async (importOriginal) => ({
   resolveSerial: adb.resolveSerial,
   tap: adb.tap,
   screenshot: adb.screenshot,
+  watchDevice: adb.watchDevice,
 }));
 
 const { createAndroidTools } = await import("./index.js");
@@ -28,8 +30,29 @@ const android = createAndroidTools()[0];
 const call = (action: string, sessionId: string, extra: Record<string, unknown> = {}) =>
   android.execute({ action, [SESSION_ID_KEY]: sessionId, ...extra });
 
-beforeEach(() => { _resetDeviceHoldsForTest(); adb.tap.mockClear(); adb.resolveSerial.mockClear(); });
+beforeEach(() => { _resetDeviceHoldsForTest(); adb.tap.mockClear(); adb.resolveSerial.mockClear(); adb.watchDevice.mockClear(); });
 afterEach(() => clearSessionOwner("agent-chunk-1"));
+
+// The feed used to start only for an emulator this app booted, so a phone over
+// USB never showed in the Android tab however the agent drove it (2026-11-26).
+describe("the device the agent works on is the one the Android tab shows", () => {
+  it("driving a device starts its feed, whoever booted it", async () => {
+    await call("tap", "chat-a", { x: 10, y: 20, device: "R3GLA04C0JK" });
+    expect(adb.watchDevice).toHaveBeenCalledWith("R3GLA04C0JK");
+  });
+
+  it("so does looking at it", async () => {
+    await call("screenshot", "chat-a");
+    expect(adb.watchDevice).toHaveBeenCalledWith("emulator-5554");
+  });
+
+  it("a chat refused the device does not take over the tab", async () => {
+    await call("tap", "chat-a", { x: 10, y: 20 });
+    adb.watchDevice.mockClear();
+    await call("tap", "chat-b", { x: 30, y: 40 });
+    expect(adb.watchDevice).not.toHaveBeenCalled();
+  });
+});
 
 describe("one chat drives a device at a time", () => {
   it("the second chat's tap is refused with who has the device, and never reaches it", async () => {

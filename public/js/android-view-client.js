@@ -3,6 +3,9 @@
 // polled server-side via adb screencap (src/android/frame-stream.ts); there
 // is no live view to attach here, just images to blit.
 
+// viewId: the device serial to draw, or a function returning it (the tab's
+// device can change while it is attached); frames of any other device are
+// dropped, so two devices with a live feed never take turns on one canvas.
 function attachAndroidView(canvas, viewId) {
   if (!window.desktop || !window.desktop.android) return () => {};
   const ctx = canvas.getContext('2d');
@@ -13,7 +16,8 @@ function attachAndroidView(canvas, viewId) {
     ctx.drawImage(img, 0, 0);
   };
   window.desktop.android.onFrame((frame) => {
-    if (viewId && frame.viewId !== viewId) return;
+    const wanted = typeof viewId === 'function' ? viewId() : viewId;
+    if (wanted && frame.viewId !== wanted) return;
     img.src = 'data:image/png;base64,' + frame.pngBase64;
   });
   return () => { img.onload = null; };

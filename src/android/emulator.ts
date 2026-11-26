@@ -8,7 +8,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { emulatorBin } from "./sdk-paths.js";
 import { runAdbText } from "./adb-run.js";
 import { listDevices } from "./adb.js";
-import { startFrameStream, type FrameStreamHandle } from "./frame-stream.js";
+import { unwatchDevice, watchDevice } from "./frame-stream.js";
 import { createLogger } from "../logger.js";
 
 const log = createLogger("android.emulator");
@@ -16,7 +16,6 @@ const log = createLogger("android.emulator");
 interface RunningEmulator {
   proc: ChildProcess;
   serial: string | null; // filled in once adb sees it
-  frameStream: FrameStreamHandle | null;
 }
 
 const running = new Map<string, RunningEmulator>(); // avdName -> handle
@@ -75,18 +74,18 @@ export async function startEmulator(avdName: string, bootTimeoutMs = 90_000): Pr
   } catch (e) {
     throw new Error(`spawn emulator failed: ${(e as Error).message}. Is the Android SDK installed?`);
   }
-  const handle: RunningEmulator = { proc, serial: null, frameStream: null };
+  const handle: RunningEmulator = { proc, serial: null };
   running.set(avdName, handle);
   proc.on("exit", () => {
-    handle.frameStream?.stop();
+    if (handle.serial) unwatchDevice(handle.serial);
     running.delete(avdName);
   });
   try {
     const serial = await waitForBoot(avdName, bootTimeoutMs);
     handle.serial = serial;
-    // Feeds the desktop canvas sink (see frame-stream.ts) so the app's Android
-    // tab shows the device live without a separate "start watching" step.
-    handle.frameStream = startFrameStream(serial, () => {});
+    // The app's Android tab shows the device from the moment it is up
+    // (frame-stream.ts), without a separate "start watching" step.
+    watchDevice(serial);
     return { serial };
   } catch (e) {
     log.warn(`emulator "${avdName}" failed to boot: ${(e as Error).message}`);
@@ -98,11 +97,9 @@ export async function startEmulator(avdName: string, bootTimeoutMs = 90_000): Pr
 
 export async function stopEmulator(serial: string): Promise<void> {
   await runAdbText(["-s", serial, "emu", "kill"]);
+  unwatchDevice(serial);
   for (const [avdName, handle] of running) {
-    if (handle.serial === serial) {
-      handle.frameStream?.stop();
-      running.delete(avdName);
-    }
+    if (handle.serial === serial) running.delete(avdName);
   }
 }
 

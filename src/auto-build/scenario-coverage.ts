@@ -7,10 +7,15 @@
  * judged less than it looks. label-check's plan named scenarios on 2 of its 13
  * chunks; every chunk landed "not scored" and nobody was told (2026-11-23).
  * So an unassigned scenario refuses the run, and the rest is said once.
+ *
+ * A sealed scenario the judge cannot run refuses it too: two builds ran to
+ * the end with every scenario a prose paragraph the judge skipped, each chunk
+ * landing as "scenarios 0/0 passed" (2026-11-26).
  */
 
 import { basename } from "node:path";
-import { listScenarios } from "../holdout/store.js";
+import { listScenarios, readScenariosForJudge } from "../holdout/store.js";
+import { parseScenarioText } from "./scenario-scorer/parser.js";
 import { scenarioNumbersOf } from "./scenario-scorer/phase-gate-runner.js";
 import type { ParsedPlan } from "./plan-parser.js";
 
@@ -42,4 +47,18 @@ export function planCoverageNotes(projectDir: string, plan: ParsedPlan): string[
     notes.push("spec/plan.md has no \"Phase verification gates\" section, so no phase is scored when it ends.");
   }
   return notes;
+}
+
+/** Why the judge cannot run this project's sealed suite, or null. File names
+ *  only: a scenario's text never goes into a tool result. */
+export function suiteDriveProblem(projectDir: string): string | null {
+  const sealed = readScenariosForJudge(basename(projectDir));
+  const stuck = sealed.filter((s) => {
+    try { parseScenarioText(s.content, s.filename); return false; } catch { return true; }
+  }).map((s) => s.filename);
+  if (stuck.length === 0) return null;
+  return `The build's judge cannot run ${stuck.length} of the ${sealed.length} sealed scenarios: ${stuck.join(", ")}. ` +
+    "Each has no numbered `**Steps:**` list for the judge to perform, so it would be judged by nothing. " +
+    "Write each again with holdout_write, same file name, in the shape that tool describes (a sealed scenario the judge " +
+    "cannot run may be replaced), then run the plan again.";
 }

@@ -11,7 +11,7 @@ import type {
 } from "./orchestrator/manager.js";
 import { parsePlanFile } from "./plan-parser.js";
 import { resolveProjectDir } from "./project-paths.js";
-import { planCoverageNotes, planCoverageProblem } from "./scenario-coverage.js";
+import { planCoverageNotes, planCoverageProblem, suiteDriveProblem } from "./scenario-coverage.js";
 
 export const FEATURE_FLAG_ENV = "LAX_AUTO_BUILD_ENABLED";
 const LEGACY_FEATURE_FLAG_ENV = "PRIMAL_AUTO_BUILD_ENABLED";
@@ -125,7 +125,7 @@ export function createBuildPlanKickoff(
       return { content: `plan parse failed: ${(error as Error).message}`, isError: true };
     }
     if (input.signal?.aborted) return cancelledKickoff();
-    const uncovered = planCoverageProblem(projectDir, plan);
+    const uncovered = planCoverageProblem(projectDir, plan) ?? suiteDriveProblem(projectDir);
     if (uncovered) return { content: uncovered, isError: true };
 
     const buildState = readBuildState(projectDir);

@@ -69,6 +69,9 @@ export const refusedCommandCheck = (command: string): string => `refused: ${comm
 export function owedFromJudging(j: ChunkJudging): OwedOnChunk[] {
   const owed: OwedOnChunk[] = [];
   if (j.scenarios.status === "not-run" && j.scenarios.owed) owed.push({ check: SCENARIOS_CHECK, why: `its held-out scenarios were not judged: ${j.scenarios.reason}` });
+  // A scoring run that came back with nothing is not a pass: "0/0 passed"
+  // landed every chunk of two builds unjudged (2026-11-26).
+  if (j.scenarios.status === "scored" && j.scenarios.scores.length === 0) owed.push({ check: SCENARIOS_CHECK, why: "the judge was run on its held-out scenarios and judged none of them" });
   const unjudged = j.scenarios.scores.filter((s) => s.unjudged);
   if (unjudged.length) owed.push({ check: SCENARIOS_CHECK, why: `${unjudged.length} held-out scenario(s) could not be judged: ${unjudged.map((s) => `${s.file}: ${s.unjudged}`).join("; ")}` });
   if (j.skeptic.status === "not-run") owed.push({ check: SKEPTIC_CHECK, why: `the skeptic did not review it: ${j.skeptic.finding}` });

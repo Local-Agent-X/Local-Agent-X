@@ -26,7 +26,7 @@ import { launchApp, LaunchRefused } from "./app-launcher.js";
 import { machineRefusalIn } from "../../tools/caged-failure-notice.js";
 import { parseScenarioFile } from "./parser.js";
 import { scoreScenario } from "./scorer.js";
-import { isUnjudged, type ProjectLaunchSpec, type ScoreReport } from "./types.js";
+import { isUnjudged, type ParsedScenario, type ProjectLaunchSpec, type ScoreReport } from "./types.js";
 
 /** `failures` and `unjudged` keep the two apart: `failedReports` are verdicts
  *  against the app, `unjudgedReports` scenarios the harness could not judge
@@ -82,10 +82,43 @@ export interface ScoreScenarioFilesOptions {
   workerIndex?: number;
 }
 
+/**
+ * A scenario file the judge cannot drive, as a report: unjudged, never a pass.
+ * Such a file used to be skipped and counted nowhere, so a suite written as
+ * prose paragraphs scored "0/0 passed" and every chunk of two builds landed
+ * with no scenario run (label-check-grok, label-check-sol, 2026-11-26).
+ */
+function cannotDrive(path: string, why: string): ScoreReport {
+  return {
+    scenarioPath: path, scenarioTitle: basename(path), score: 0, passed: false, steps: [],
+    metCriteria: [], failedCriteria: [], reasoning: "", durationMs: 0, abortReason: `cannot drive: ${why}`,
+  };
+}
+
+type ReadScenario = { path: string; scenario: ParsedScenario } | { path: string; report: ScoreReport };
+
+function readScenarios(paths: string[], onProgress?: (msg: string) => void): ReadScenario[] {
+  return paths.map((path) => {
+    try { return { path, scenario: parseScenarioFile(path) }; }
+    catch (e) {
+      onProgress?.(`cannot drive ${path}: ${(e as Error).message}`);
+      return { path, report: cannotDrive(path, (e as Error).message) };
+    }
+  });
+}
+
 /** Start the app, score each scenario file against it, stop the app. The one
- *  scoring run: a phase gate's and the holdout_judge tool's. */
+ *  scoring run: a phase gate's and the holdout_judge tool's. Every file given
+ *  comes back as a report, and a run that judged nothing is never "proceed". */
 export async function scoreScenarioFiles(opts: ScoreScenarioFilesOptions): Promise<PhaseGateRunnerOutcome> {
-  const { launch, scenarioPaths } = opts;
+  const { launch } = opts;
+  const read = readScenarios(opts.scenarioPaths, opts.onProgress);
+  if (read.length === 0) return { kind: "no-spec", reason: "no scenario files were given to score" };
+  // Nothing here can be driven: the app is not started for it.
+  if (read.every((r) => "report" in r)) {
+    const reports = read.flatMap((r) => ("report" in r ? [r.report] : []));
+    return { kind: "unjudged", reports, unjudgedReports: reports };
+  }
 
   let app: Awaited<ReturnType<typeof launchApp>> | null = null;
   try {
@@ -112,14 +145,12 @@ export async function scoreScenarioFiles(opts: ScoreScenarioFilesOptions): Promi
     ? { kind: "error", reason: `the app stopped running during scoring (exit code ${app.proc.exitCode}): ${app.stderr.slice(-3).join("").slice(0, 300)}` }
     : null;
   try {
-    for (const path of scenarioPaths) {
+    for (const item of read) {
       if (opts.signal?.aborted) {
         return { kind: "error", reason: "aborted mid-scoring" };
       }
-      const scenario = (() => {
-        try { return parseScenarioFile(path); } catch (e) { opts.onProgress?.(`skip ${path}: ${(e as Error).message}`); return null; }
-      })();
-      if (!scenario) continue;
+      if ("report" in item) { reports.push(item.report); continue; }
+      const { scenario } = item;
       const dead = stopped();
       if (dead) return dead;
       opts.onProgress?.(`scoring ${scenario.title}…`);

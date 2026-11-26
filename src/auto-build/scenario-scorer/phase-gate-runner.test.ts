@@ -10,15 +10,22 @@ const fake = vi.hoisted(() => ({
   results: [] as Array<Record<string, unknown>>,
   calls: 0,
   stopped: 0,
+  launched: 0,
 }));
 vi.mock("./app-launcher.js", () => ({
-  launchApp: vi.fn(async () => ({
+  launchApp: vi.fn(async () => (fake.launched++, {
     proc: { get exitCode() { return fake.exitCode; } },
     stop: async () => { fake.stopped++; },
     stdout: [], stderr: ["listen EADDRINUSE\n"], url: "http://127.0.0.1:7070/",
   })),
 }));
-vi.mock("./parser.js", () => ({ parseScenarioFile: (path: string) => ({ path, title: path }) }));
+// A file named "prose" is one the real parser refuses: a paragraph, no steps.
+vi.mock("./parser.js", () => ({
+  parseScenarioFile: (path: string) => {
+    if (path.includes("prose")) throw new Error(`scenario ${path} has no Steps: list — cannot drive`);
+    return { path, title: path };
+  },
+}));
 vi.mock("./scorer.js", () => ({
   scoreScenario: vi.fn(async (opts: { scenario: { path: string } }) => {
     fake.calls++;
@@ -33,7 +40,39 @@ const launch = { start: "npm start", readyUrl: "http://127.0.0.1:7070/", readyTi
 const run = (paths: string[]) => scoreScenarioFiles({ projectDir: "/proj", launch, scenarioPaths: paths });
 const crash = (reason: string) => ({ score: 0, passed: false, abortReason: reason });
 
-beforeEach(() => { fake.exitCode = null; fake.results = []; fake.calls = 0; fake.stopped = 0; });
+beforeEach(() => { fake.exitCode = null; fake.results = []; fake.calls = 0; fake.stopped = 0; fake.launched = 0; });
+
+// Every scenario of two builds was a prose paragraph. Each was skipped with a
+// log line and counted nowhere, the run came back "proceed" with no reports,
+// and every chunk landed as "scenarios 0/0 passed" (2026-11-26).
+describe("scoreScenarioFiles: a scenario the judge cannot drive", () => {
+  it("a suite it cannot drive at all is unjudged, every file named, and the app is not started for it", async () => {
+    const out = await run(["01-prose.md", "02-prose.md"]);
+    expect(out.kind).toBe("unjudged");
+    if (out.kind !== "unjudged") return;
+    expect(out.reports.map((r) => r.scenarioPath)).toEqual(["01-prose.md", "02-prose.md"]);
+    expect(out.unjudgedReports).toHaveLength(2);
+    expect(out.unjudgedReports[0].abortReason).toMatch(/^cannot drive: .*no Steps/);
+    expect(out.reports.every((r) => !r.passed)).toBe(true);
+    expect(fake.launched).toBe(0);
+  });
+
+  it("one it cannot drive is reported beside the ones it scored, never dropped", async () => {
+    fake.results = [{ score: 9, passed: true }];
+    const out = await run(["01-a.md", "02-prose.md"]);
+    expect(out.kind).toBe("unjudged");
+    if (out.kind !== "unjudged") return;
+    expect(out.reports.map((r) => [r.scenarioPath, r.passed])).toEqual([["01-a.md", true], ["02-prose.md", false]]);
+    expect(out.unjudgedReports.map((r) => r.scenarioPath)).toEqual(["02-prose.md"]);
+    expect(fake.calls).toBe(1);
+  });
+
+  it("a run given nothing to judge is not a pass", async () => {
+    const out = await run([]);
+    expect(out.kind).toBe("no-spec");
+    expect(fake.launched).toBe(0);
+  });
+});
 
 describe("scoreScenarioFiles", () => {
   it("tries a scenario the harness could not judge once more, and takes the second answer", async () => {

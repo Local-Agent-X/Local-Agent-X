@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { writeScenario } from "../holdout/store.js";
 import { parsePlanText } from "./plan-parser.js";
-import { planCoverageNotes, planCoverageProblem } from "./scenario-coverage.js";
+import { planCoverageNotes, planCoverageProblem, suiteDriveProblem } from "./scenario-coverage.js";
 import { createBuildPlanKickoff } from "./kickoff.js";
 
 const DATA = mkdtempSync(join(tmpdir(), "lax-coverage-"));
@@ -70,5 +70,28 @@ describe("run_build_plan's kickoff", () => {
     const out = await createBuildPlanKickoff({ start })({ projectDir: dir });
     expect(start).toHaveBeenCalledOnce();
     expect(out.content).toContain("Not checked in this run:\n- This project has no sealed scenario suite");
+  });
+});
+
+// Every scenario of two builds was a paragraph of prose. The judge skipped
+// each, and the builds ran to the end with none of them judged (2026-11-26).
+describe("suiteDriveProblem", () => {
+  const SHAPED = ["# Scenario: add", "", "**Steps:**", "1. They add a pill", "", "**Satisfaction criteria:**", "- it is listed"].join("\n");
+  const SECRET_PROSE = "Riley adds a pill and should see the purple badge.";
+
+  it("names the sealed scenarios the judge cannot run, and how to fix them, without their text", () => {
+    writeScenario("prosebox", "01-add.md", SECRET_PROSE);
+    writeScenario("prosebox", "02-check.md", SHAPED);
+    writeScenario("prosebox", "03-about.md", SECRET_PROSE);
+    const why = suiteDriveProblem(project("prosebox"));
+    expect(why).toContain("cannot run 2 of the 3 sealed scenarios: 01-add.md, 03-about.md");
+    expect(why).toContain("holdout_write");
+    expect(why).not.toContain("purple badge");
+  });
+
+  it("is silent for a suite the judge can run, and for a project with none", () => {
+    writeScenario("fine", "01-add.md", SHAPED);
+    expect(suiteDriveProblem(project("fine"))).toBeNull();
+    expect(suiteDriveProblem(project("no-suite-at-all"))).toBeNull();
   });
 });

@@ -65,8 +65,8 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/agent-loop/` | 12 | 1 | S |  |
 | `src/app-scaffold/` | 12 | 7 | M |  |
 | `src/ari-kernel/` | 12 | 12 | M |  |
+| `src/auto-build/` | 12 | 85 | XL | 1 |
 | `src/integrations/` | 12 | 15 | M |  |
-| `src/auto-build/` | 11 | 85 | XL | 1 |
 | `src/whatsapp-bridge/` | 11 | 8 | M | 1 |
 | `src/agent-guards/` | 10 | 13 | L |  |
 | `src/calendar/` | 10 | 10 | M |  |

@@ -20,6 +20,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { join, resolve } from "node:path";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import { getLaxDir } from "../../lax-data-dir.js";
+import { pruneFinishedTurnToolResults } from "../../context-manager/prune-tool-results.js";
 
 /** A conversation past this is not worth carrying: reading the chunk again costs less. */
 const MAX_BYTES = 4 * 1024 * 1024;
@@ -52,6 +53,21 @@ export function loadWorkerConversation(projectDir: string, chunk: number): ChatC
   } catch {
     return undefined; // unreadable or half-written: start fresh
   }
+}
+
+/**
+ * The conversation as the worker's next round is sent it: what it said and
+ * did, with the output of its earlier tool calls stubbed (the chat lane's
+ * finished-turn prune, context-manager/prune-tool-results.ts). Those rounds
+ * are over; the files are on disk and a command can be run again. Carried
+ * whole, GPT workers opened fix rounds at 150k to 250k tokens and re-sent
+ * that on every call of the round (label-check-sol, 2026-11-26). A pure
+ * function of the conversation, so the next round's prefix is the same bytes.
+ */
+export function carriedConversation(messages: ChatCompletionMessageParam[]): ChatCompletionMessageParam[] {
+  // Every row is from a finished round: the prune stubs what is before the last user row.
+  const closed: ChatCompletionMessageParam = { role: "user", content: "" };
+  return pruneFinishedTurnToolResults([...messages, closed]).slice(0, -1);
 }
 
 export function dropWorkerConversation(projectDir: string, chunk: number): void {

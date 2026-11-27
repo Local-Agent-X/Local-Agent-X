@@ -6,7 +6,7 @@ import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
-import { dropWorkerConversation, loadWorkerConversation, saveWorkerConversation } from "./worker-conversation.js";
+import { carriedConversation, dropWorkerConversation, loadWorkerConversation, saveWorkerConversation } from "./worker-conversation.js";
 
 const DATA = mkdtempSync(join(tmpdir(), "lax-worker-conv-"));
 const prior = process.env.LAX_DATA_DIR;
@@ -57,6 +57,27 @@ describe("a chunk worker's conversation, kept between rounds", () => {
     expect(loadWorkerConversation("C:/apps/broken", 2)).toBeUndefined();
     writeFileSync(file, "[]");
     expect(loadWorkerConversation("C:/apps/broken", 2)).toBeUndefined();
+  });
+
+  // label-check-sol, 2026-11-26: GPT workers opened fix rounds at 150k to 250k
+  // tokens, the whole earlier conversation with every file it had read.
+  it("is carried into the next round with its earlier tool output stubbed, and what the worker said and did kept", () => {
+    const dump = "x".repeat(40_000);
+    const conversation: ChatCompletionMessageParam[] = [
+      { role: "user", content: "Build chunk 2." },
+      { role: "assistant", content: "Reading the rules.", tool_calls: [{ id: "c1", type: "function", function: { name: "read", arguments: '{"path":"firestore.rules"}' } }] } as ChatCompletionMessageParam,
+      { role: "tool", tool_call_id: "c1", content: dump } as ChatCompletionMessageParam,
+      { role: "assistant", content: "Rules rewritten; tests pass." },
+    ];
+    const carried = carriedConversation(conversation);
+    expect(carried).toHaveLength(4);
+    expect(JSON.stringify(carried).length).toBeLessThan(2_000);
+    expect(carried[1]).toEqual(conversation[1]);
+    expect(carried[3]).toEqual(conversation[3]);
+    expect(String(carried[2].content)).toContain("read");
+    // The same bytes every time, so the next round's prompt prefix is stable.
+    expect(carriedConversation(conversation)).toEqual(carried);
+    expect(conversation[2].content).toBe(dump);
   });
 
   it("one too large to be worth carrying is not kept, and replaces nothing stale", () => {

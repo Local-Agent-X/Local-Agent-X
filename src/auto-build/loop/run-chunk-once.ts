@@ -10,6 +10,7 @@ import type { JudgmentHook } from "../chunk-review/judgment-hook.js";
 import { chunkJudgingSummary, type ChunkJudge } from "../chunk-review/chunk-verdict.js";
 import { chunkChangedFiles, gitDiffPath } from "../git-helpers.js";
 import type { EmitFn } from "./types.js";
+import { carriedConversation } from "./worker-conversation.js";
 
 export interface RunChunkOnceOptions {
   chunk: ParsedChunk;
@@ -182,7 +183,7 @@ export async function runChunkOnce(opts: RunChunkOnceOptions): Promise<ChunkRevi
     signal: opts.signal,
     parentSessionId: opts.parentSessionId,
     parentOpId: opts.parentOpId,
-    ...(opts.continueFrom ? { priorMessages: opts.continueFrom } : {}),
+    ...(opts.continueFrom ? { priorMessages: carriedConversation(opts.continueFrom) } : {}),
     ...(opts.onTranscript ? { keepTranscript: true } : {}),
     ...(opts.chunk.footprint?.length ? { touches: opts.chunk.footprint } : {}),
   });

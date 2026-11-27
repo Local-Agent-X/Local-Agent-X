@@ -40,7 +40,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/broker-transport/` | 32 | 53 | XL |  |
 | `src/inbox/` | 31 | 8 | M |  |
 | `src/agent-store/` | 30 | 8 | M | 1 |
-| `src/context-manager/` | 29 | 18 | M |  |
+| `src/context-manager/` | 30 | 18 | M |  |
 | `src/context/` | 28 | 11 | M |  |
 | `src/agent-request/` | 27 | 19 | L | 2 |
 | `src/app-runtime/` | 26 | 14 | L |  |

@@ -363,6 +363,10 @@ describe("effective sandbox status", () => {
 // While the cage's fence proof runs (seconds after start, longer on a first
 // boot) the effective mode reads "host", so a spawn in that window would run
 // unconfined unless the seam refuses it or the caller waits for the proof.
+// A command that prints HOST by running something: a bare `echo` only prints
+// its own words, and bash does not run those (tools/shell-noop.ts).
+const HOST_CMD = "node -e \"console.log('HOST')\"";
+
 describe("Windows cage proof pending: nothing spawns on the unconfined host", () => {
   const HELPER = "C:\\ProgramData\\Local Agent X\\bin\\srt-win.exe";
   const prevMode = process.env.LAX_SANDBOX;
@@ -437,7 +441,7 @@ describe("Windows cage proof pending: nothing spawns on the unconfined host", ()
   // than the timeout 1 ms, and a false "Command timed out".
   it("bash keeps its whole timeout after the wait, and announces the wait", async () => {
     const progress: string[] = [];
-    const run = bashTool.execute({ command: "echo HOST", timeout: 1500, _onProgress: (m: string) => progress.push(m) });
+    const run = bashTool.execute({ command: HOST_CMD, timeout: 1500, _onProgress: (m: string) => progress.push(m) });
     await new Promise((r) => setTimeout(r, 1600));
     cage.settle(true);
     const result = await run;
@@ -447,7 +451,7 @@ describe("Windows cage proof pending: nothing spawns on the unconfined host", ()
   });
 
   it("the harness backstop leaves the wait out", async () => {
-    const run = runInApprovalWaitScope(() => withTimeout(bashTool.execute({ command: "echo HOST" }), 600, "bash", currentApprovalWaitMs));
+    const run = runInApprovalWaitScope(() => withTimeout(bashTool.execute({ command: HOST_CMD }), 600, "bash", currentApprovalWaitMs));
     await new Promise((r) => setTimeout(r, 700));
     cage.settle(true);
     expect(String((await run).content)).toBe("CAGED");
@@ -455,7 +459,7 @@ describe("Windows cage proof pending: nothing spawns on the unconfined host", ()
 
   it("an abort during the wait returns Aborted and starts nothing", async () => {
     const controller = new AbortController();
-    const run = bashTool.execute({ command: "echo HOST" }, controller.signal);
+    const run = bashTool.execute({ command: HOST_CMD }, controller.signal);
     await tick();
     controller.abort();
     const result = await run;
@@ -494,7 +498,7 @@ describe("Windows cage proof pending: nothing spawns on the unconfined host", ()
 
   it("bash waits for the proof, then runs caged once it is proven", async () => {
     let finished = false;
-    const run = bashTool.execute({ command: "echo HOST" }).finally(() => { finished = true; });
+    const run = bashTool.execute({ command: HOST_CMD }).finally(() => { finished = true; });
     await tick();
     expect(finished).toBe(false);
     expect(cage.wrapped).toEqual([]);
@@ -506,7 +510,7 @@ describe("Windows cage proof pending: nothing spawns on the unconfined host", ()
   });
 
   it("bash waits for the proof, then runs on the visible host fallback when it failed", async () => {
-    const run = bashTool.execute({ command: "echo HOST" });
+    const run = bashTool.execute({ command: HOST_CMD });
     await tick();
     cage.settle(false);
     const result = await run;

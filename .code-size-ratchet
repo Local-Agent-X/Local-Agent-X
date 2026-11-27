@@ -65,6 +65,6 @@ src/tools/build-app.ts#buildAppTool.execute 131
 src/tools/email-mutate-tools.ts#withSession:callback 111
 src/tools/http-request.ts#tool.execute 149
 src/tools/secret-tools.ts#createSecretTools 111
-src/tools/shell-tool.ts#bashTool.execute 106
+src/tools/shell-tool.ts#bashTool.execute 103
 src/voice/voice-session/model-init.ts#initializeVoiceStack 119
 src/whatsapp-bridge/message-handler.ts#handleMessagesUpsert 179

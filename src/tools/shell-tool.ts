@@ -15,6 +15,8 @@ import { cwdOf, onEventOf, onProgressOf, sessionIdOf, toolCallIdOf } from "../to
 import { holdForSendNow, movedToBackgroundResult } from "./shell-handoff.js";
 import { vendorDriftHint } from "../protocols/vendor-drift.js";
 import { shellEmulatorHint } from "./android-tools/shell-emulator-hint.js";
+import { printedOnlyText, printOnlyRefusal } from "./shell-noop.js";
+import { unifiedRegistry } from "./registry.js";
 
 type WithheldRun = { secrets: ResolvedSecretEnv & { withheld: string }; secretEnv: SecretEnv; command: string; key: string };
 
@@ -22,6 +24,23 @@ type WithheldRun = { secrets: ResolvedSecretEnv & { withheld: string }; secretEn
 function withheldRunOf(secrets: ResolvedSecretEnv | null, secretEnv: SecretEnv | null, command: string, args: Record<string, unknown>): WithheldRun | null {
   if (!secrets?.withheld || !secretEnv) return null;
   return { secrets: secrets as ResolvedSecretEnv & { withheld: string }, secretEnv, command, key: toolCallIdOf(args) || String(Date.now()) };
+}
+
+type BashPreflight =
+  | { refused: ToolResult }
+  | { secrets: ResolvedSecretEnv | null; scrub: (text: string) => string; withheldRun: WithheldRun | null };
+
+/** What is settled before a bash call runs anything: its stored secrets
+ *  (refused when one cannot be used), and a command that only prints its own
+ *  words, which runs nothing and is refused (shell-noop.ts). */
+function bashPreflight(command: string, args: Record<string, unknown>): BashPreflight {
+  let secretEnv;
+  try { secretEnv = secretEnvOf(args); } catch (e) { return { refused: err((e as Error).message) }; }
+  const secrets = secretEnv ? resolveSecretEnv(secretEnv, command) : null;
+  if (secrets && "refusal" in secrets) return { refused: err(secrets.refusal) };
+  const printed = printedOnlyText(command);
+  if (printed !== null) return { refused: err(printOnlyRefusal(command, printed, (name) => unifiedRegistry.get(name) !== undefined)) };
+  return { secrets, scrub: secrets ? secrets.scrub : (text: string) => text, withheldRun: withheldRunOf(secrets, secretEnv ?? null, command, args) };
 }
 
 /**
@@ -225,12 +244,9 @@ export const bashTool: ToolDefinition = {
     // process_start/process_restart too, not just bash. Single source there.
     const abortSignal = signal;
     const onProgress = onProgressOf(args);
-    let secretEnv;
-    try { secretEnv = secretEnvOf(args); } catch (e) { return err((e as Error).message); }
-    const secrets = secretEnv ? resolveSecretEnv(secretEnv, command) : null;
-    if (secrets && "refusal" in secrets) return err(secrets.refusal);
-    const scrub = secrets ? secrets.scrub : (text: string) => text;
-    const withheldRun = withheldRunOf(secrets, secretEnv, command, args);
+    const pre = bashPreflight(command, args);
+    if ("refused" in pre) return pre.refused;
+    const { secrets, scrub, withheldRun } = pre;
 
     const isWin = process.platform === "win32";
     // The same (memoized) Windows shell runCaged spawns, so translation and

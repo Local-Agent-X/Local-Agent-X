@@ -540,6 +540,30 @@ describe("orchestrator session title", () => {
   });
 });
 
+// A chat is saved on its first message, so every device lists it while its first
+// turn runs (a chat started on the phone shows on the desktop, and the other way).
+describe("orchestrator saves a new chat as it starts", () => {
+  const run = (ctx: unknown, sessionId: string) =>
+    runChatTurn({ sessionId, message: "hello", attachments: [], projectId: undefined, ctx: ctx as never, requestRole: "operator", sseSink: null });
+
+  it("saves a new listed chat on its first message, titled", async () => {
+    const { ctx, session } = makeCtx(() => {});
+    await run(ctx, "mobile-new-chat-1");
+    expect(ctx.saveSession).toHaveBeenCalledWith(session);
+    expect(session.title).toBe("hello");
+  });
+
+  it("does not save early a session the lists hide, or a chat that already has messages", async () => {
+    const hidden = makeCtx(() => {});
+    await run(hidden.ctx, "cron-nightly-1");
+    expect(hidden.ctx.saveSession).not.toHaveBeenCalled();
+    const old = makeCtx(() => {});
+    old.session.messages.push({ role: "user", content: "earlier" });
+    await run(old.ctx, "chat-with-history");
+    expect(old.ctx.saveSession).not.toHaveBeenCalled();
+  });
+});
+
 // Every /greenfield chat was titled "**SLASH COMMAND** — The user invoked
 // `/greenfield`. Follow t..." (2026-11-25): the title came from the expansion.
 describe("titleFromFirstMessage", () => {

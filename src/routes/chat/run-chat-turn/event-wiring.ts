@@ -26,6 +26,9 @@ export interface EventWiring {
 export interface InstallEventWiringInput {
   sessionId: string;
   message: string;
+  /** The message as the user typed it, before slash expansion: what every
+   *  device viewing the chat shows as the user's row. */
+  typed: string;
   attachments: Array<{ name: string; url: string; isImage: boolean }>;
   prepared: PreparedAgentRequest;
   ctx: ServerContext;
@@ -53,11 +56,20 @@ export interface InstallEventWiringInput {
   onChatRegistered: (token: AbortController) => void;
 }
 
+/** The user's row for this turn, as every device viewing the chat shows it. */
+export function userMessageEvent(text: string, images: ReadonlyArray<{ name: string; url: string }>): ServerEvent {
+  return images.length > 0
+    ? { type: "user_message", text, images: images.map(({ name, url }) => ({ name, url })) }
+    : { type: "user_message", text };
+}
+
 export async function installEventWiring(input: InstallEventWiringInput): Promise<EventWiring> {
   const { sessionId, message, attachments, prepared, ctx, emitSse, abortController } = input;
 
   const wsChat = ctx.chatWs.startChat(sessionId);
   input.onChatRegistered(wsChat.abort);
+  // Straight to the chat socket: an SSE or messaging caller sent the message itself.
+  wsChat.onEvent(userMessageEvent(input.typed, prepared.images));
   const onEvent = (event: ServerEvent) => { emitSse(event); wsChat.onEvent(event); };
   ctx.setActiveOnEvent(sessionId, onEvent);
   ctx.setActiveBrowserSessionId(sessionId);

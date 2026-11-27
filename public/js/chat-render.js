@@ -97,7 +97,9 @@ function renderMessage(msg, ctx) {
     const displayText = msg.attachments ? msg.content.replace(/^Attached files:\n[\s\S]*?\n\n/, '') : msg.content;
     // A build decision the engine posted to its lead is not drawn (chat-app-message.js).
     if (typeof laxAppMessage !== 'undefined' && laxAppMessage.hidden(displayText)) return null;
-    const userEl = addMessageEl('user', displayText, msg.attachments, msg.timestamp);
+    // A message sent from the phone carries its pictures as `images` (chat-message-echo.js).
+    const attachments = typeof userRowAttachments === 'function' ? userRowAttachments(msg) : msg.attachments;
+    const userEl = addMessageEl('user', displayText, attachments, msg.timestamp);
     // A message the app sent (a collab's brief) is drawn as one line (chat-app-message.js).
     const appNote = typeof laxAppMessage !== 'undefined' ? laxAppMessage.summaryOf(displayText) : null;
     if (userEl && appNote) return laxAppMessage.apply(userEl, displayText, appNote);

@@ -58,6 +58,7 @@ const ALL_SERVER_EVENT_TYPES: Record<ServerEvent["type"], true> = {
   inject_consumed: true,
   plan_mode_changed: true,
   op_heartbeat: true,
+  user_message: true,
 };
 
 describe("ServerEvent ↔ process relay drift", () => {

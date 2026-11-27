@@ -21,6 +21,7 @@ import { anchorOwnCopy } from "../../../agency/chat-own-copy.js";
 import { applyFolderRule } from "../../../agency/orchestrator-role.js";
 import type { Session } from "../../../types.js";
 import { quietForMs } from "../../../memory/manager.js";
+import { isListedChat } from "../../../session/remove.js";
 
 const logger = createLogger("routes.chat.run-turn");
 
@@ -82,6 +83,9 @@ function applyRequestToSession(session: Session, args: RunChatTurnArgs, message:
     session.title = args.sessionTitle ?? named ?? titleFromFirstMessage(message);
     // The mode is fixed here, on the session's first message (session/mode.ts).
     if (args.mode === "code") session.mode = "code";
+    // Saved now, not when the reply is: every device lists the chat while its
+    // first turn runs (a chat started on the phone shows on the desktop).
+    if (isListedChat({ id: args.sessionId, removedAt: session.removedAt, updatedAt: session.updatedAt })) void args.ctx.saveSession(session);
   }
 
   // Persist the chat→project link onto the durable session so it survives
@@ -370,7 +374,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
     // Pass turnAbort so the stream signal and the injection canary cancel the
     // same controller the lock holds.
     const wiring = await installEventWiring({
-      sessionId, message, attachments, prepared, ctx, emitSse, abortController: turnAbort,
+      sessionId, message, typed: args.message, attachments, prepared, ctx, emitSse, abortController: turnAbort,
       onChatRegistered: (token) => { chatToken = token; },
     });
     onEventInstalled = true;

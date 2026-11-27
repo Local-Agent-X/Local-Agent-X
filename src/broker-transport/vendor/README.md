@@ -21,7 +21,7 @@ exchange:
 | Voice control plane | `voice.ts` |
 | Agent Sync as the phone presses it: status, Sync now, Force pull, Force push | `memory-sync.ts` |
 | Offline apps: the state snapshot, the bundle, the POST /state body and the merge both devices run | `apps.ts` |
-| The sessions list row and the session-id pattern | `sessions.ts` |
+| The sessions list row, the `chat_list_changed` frame, and the session-id pattern | `sessions.ts` |
 | Broker signaling client | `broker-client.ts`, `connect-url.ts`, `parse-server-frame.ts`, `socket-adapter.ts`, `index.ts` |
 | Account API client and device-code login (sign in, register, pair, renew) | `account-api.ts`, `device-code-login.ts` |
 

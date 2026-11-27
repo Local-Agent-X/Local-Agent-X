@@ -79,3 +79,15 @@ describe("replayBufferedEvents — a subscriber that already holds the finished 
     expect(replayedTypes("s-g", { doneOpId: "op-old" })).toContain("stream");
   });
 });
+
+describe("replayBufferedEvents — the turn's user message", () => {
+  it("replays first, ahead of the op start and the reply, as it went out live", () => {
+    const { onEvent } = buildManager().startChat("s-u");
+    onEvent({ type: "user_message", text: "from the phone" });
+    onEvent({ type: "chat_op_started", opId: "op-u" } as ServerEvent);
+    onEvent({ type: "stream", delta: "the reply" } as ServerEvent);
+    const types = replayedTypes("s-u");
+    expect(types.slice(0, 2)).toEqual(["user_message", "chat_op_started"]);
+    expect(types.filter((t) => t === "user_message")).toHaveLength(1);
+  });
+});

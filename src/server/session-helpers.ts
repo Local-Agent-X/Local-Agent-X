@@ -3,6 +3,7 @@ import type { SessionStore, MemoryIndex } from "../memory/index.js";
 import type { Session } from "../types.js";
 import { setSessionProject } from "../session/project.js";
 import { isSyntheticSessionId } from "../memory/synthetic-sessions.js";
+import { isListedChat } from "../session/remove.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("server.session-helpers");
@@ -44,8 +45,10 @@ export function createSessionHelpers(deps: {
   memoryIndex: MemoryIndex;
   dataDir: string;
   maxCached: number;
+  /** A chat the lists show was written: every device re-reads its chat list. */
+  onListedChatSaved?: () => void;
 }): SessionHelpers {
-  const { sessionStore, memoryIndex, dataDir, maxCached } = deps;
+  const { sessionStore, memoryIndex, dataDir, maxCached, onListedChatSaved } = deps;
   const sessions = new Map<string, Session>();
   const writeQueues = new Map<string, Promise<void>>();
 
@@ -70,6 +73,7 @@ export function createSessionHelpers(deps: {
     const next = prev.then(async () => {
       sessions.set(session.id, session);
       sessionStore.save(session);
+      if (isListedChat(session)) onListedChatSaved?.();
       memoryIndex.markDirty();
       try { await indexSessionIncrementally(session); } catch (e) { logger.warn(`[memory] Incremental index failed:`, (e as Error).message); }
     }).catch(e => logger.error(`[session] Save failed:`, e));

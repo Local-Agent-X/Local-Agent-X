@@ -287,6 +287,13 @@ export type ServerEvent =
   // echo ignore it.
   | { type: "inject_queued"; injectId: string }
   | { type: "inject_consumed"; injectId: string; message?: string }
+  // The user's message that started this turn, sent to every client viewing
+  // the chat as soon as the turn registers, so a chat typed on the phone shows
+  // on the desktop (and the other way) before the reply is saved with it.
+  // Buffered for replay. The client that sent it already shows it and skips it
+  // (chat-message-echo.js; the phone's chat reducer). `images` are the
+  // turn's pictures as stored (`/uploads/<file>`).
+  | { type: "user_message"; text: string; images?: Array<{ name: string; url: string }> }
   // Enforced plan mode flipped for this session (user's Plan toggle over WS).
   // enforced:false is the user's approval event — the standing mutation ban
   // is lifted. The UI mirrors the flag onto the composer's Plan chip.

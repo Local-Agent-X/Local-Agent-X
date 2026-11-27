@@ -15,6 +15,7 @@
 import type { ControlTransport } from "../screen-stream/peer.js";
 import { ChunkedLink } from "./vendor/protocol.js";
 import { createLogger } from "../logger.js";
+import { ChatResume } from "./chat-resume.js";
 
 const logger = createLogger("broker-transport.chat-bridge");
 
@@ -48,6 +49,15 @@ export interface LoopbackChatSocket {
 export interface ChatBridgeDeps {
   /** Open a fresh operator-authed loopback ws to /ws/chat. */
   openLoopback: () => LoopbackChatSocket;
+  /** Run `fn` after `ms` (tests drive it by hand). */
+  schedule?: (fn: () => void, ms: number) => void;
+}
+
+/** How long after a dropped loopback the bridge opens a new one. */
+const LOOPBACK_REOPEN_MS = 1000;
+
+function scheduleUnref(fn: () => void, ms: number): void {
+  setTimeout(fn, ms).unref();
 }
 
 /** The chat seam the broker dialer wires the peer's `chat` data channel into. ChatBridge
@@ -97,37 +107,54 @@ export class ChatBridge implements ChatChannel {
     if (this.closed) return;
     this.detach(); // drop any prior loopback — attach is re-entrant across peer rebuilds
     this.transport = transport;
-    const socket = this.deps.openLoopback();
-    this.socket = socket;
     const chunks = new ChunkedLink(); // per channel: the phone behind a new one may be another build
+    const resume = new ChatResume(); // per channel: a new one is a new link, which the phone re-subscribes
     transport.send(chunks.hello());
-
-    socket.onOpen(() => {
-      if (this.socket !== socket) return; // a stale socket's late open — ignore
-      this.socketOpen = true;
-      for (const frame of this.pending) socket.send(frame);
-      this.pending.length = 0;
-    });
-    socket.onMessage((text) => {
-      if (this.closed || this.socket !== socket) return;
-      for (const part of chunks.outgoing(text)) transport.send(part); // server event → phone
-    });
-    socket.onClose(() => {
-      // The loopback dropped. Identity-check so a stale socket's late close doesn't null a
-      // freshly re-attached one. The data channel stays; a peer rebuild re-bridges via attach.
-      if (this.socket !== socket) return;
-      this.socketOpen = false;
-      this.socket = null;
-      if (!this.closed) logger.warn("[broker-transport] chat loopback closed");
-    });
+    this.openLoopback(transport, chunks, resume, false);
 
     transport.onMessage((text) => {
       const whole = chunks.incoming(text); // null: the phone's hello, or part of a frame
-      if (whole !== null) this.toServer(whole); // phone frame → server
+      if (whole === null) return;
+      resume.fromPhone(whole);
+      this.toServer(whole); // phone frame → server
     });
     // The chat data channel closed (the peer is rebuilding after a reconnect). Drop the
     // loopback but stay re-attachable — NOT a full close (that's the dialer-stop path).
     transport.onClose(() => this.detach());
+  }
+
+  /** Open the loopback for this channel. `restoring`: the previous loopback dropped
+   *  under a live channel, so the phone's subscriptions go back on the new one first. */
+  private openLoopback(transport: ControlTransport, chunks: ChunkedLink, resume: ChatResume, restoring: boolean): void {
+    const socket = this.deps.openLoopback();
+    this.socket = socket;
+
+    socket.onOpen(() => {
+      if (this.socket !== socket) return; // a stale socket's late open — ignore
+      this.socketOpen = true;
+      if (restoring) for (const frame of resume.restoreFrames()) socket.send(frame);
+      for (const frame of this.pending) if (!restoring || !resume.restores(frame)) socket.send(frame);
+      this.pending.length = 0;
+    });
+    socket.onMessage((text) => {
+      if (this.closed || this.socket !== socket) return;
+      resume.fromDesktop(text);
+      for (const part of chunks.outgoing(text)) transport.send(part); // server event → phone
+    });
+    socket.onClose(() => {
+      // Identity-check so a stale socket's late close doesn't null a freshly re-attached one.
+      if (this.socket !== socket) return;
+      this.socketOpen = false;
+      this.socket = null;
+      if (this.closed || this.transport !== transport) return;
+      // The loopback dropped under a live channel (the server's 24 h socket age, a missed
+      // heartbeat). Reopen it: the phone sees no new link, so nothing else would.
+      logger.warn("[broker-transport] chat loopback closed; reopening");
+      (this.deps.schedule ?? scheduleUnref)(() => {
+        if (this.closed || this.transport !== transport || this.socket !== null) return;
+        this.openLoopback(transport, chunks, resume, true);
+      }, LOOPBACK_REOPEN_MS);
+    });
   }
 
   /** Drop the current loopback + buffered frames but stay re-attachable (the peer is

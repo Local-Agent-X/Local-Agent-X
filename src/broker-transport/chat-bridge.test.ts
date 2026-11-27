@@ -196,4 +196,72 @@ describe("ChatBridge", () => {
     // A frame after the loopback dropped is buffered, not thrown.
     expect(() => transport.emit({ type: "chat", sessionId: "s1", message: "x" })).not.toThrow();
   });
+
+  describe("a loopback that drops under a live channel", () => {
+    function reopening() {
+      const sockets: FakeLoopback[] = [];
+      const timers: Array<() => void> = [];
+      const bridge = new ChatBridge({
+        openLoopback: () => { const s = new FakeLoopback(); sockets.push(s); return s; },
+        schedule: (fn) => { timers.push(fn); },
+      });
+      const transport = new FakeTransport();
+      bridge.attach(transport);
+      sockets[0]!.open();
+      return { bridge, transport, sockets, runTimers: () => timers.splice(0).forEach((fn) => fn()) };
+    }
+
+    it("reopens, puts the phone's chats back with the last reply it holds, and asks for the snapshots again", () => {
+      const { transport, sockets, runTimers } = reopening();
+      transport.emit({ type: "subscribe", sessionId: "s1", historyAsOf: 5 });
+      transport.emit({ type: "chat", sessionId: "s2", message: "hi", attachments: [] });
+      transport.emit({ type: "inbox_list" });
+      sockets[0]!.serverSend({ type: "event", sessionId: "s1", event: { type: "done", usage: {}, opId: "op-9" } });
+
+      sockets[0]!.serverClose();
+      expect(sockets).toHaveLength(1); // not before the delay
+      runTimers();
+      expect(sockets).toHaveLength(2);
+      sockets[1]!.open();
+      expect(sockets[1]!.sentFrames).toEqual([
+        { type: "subscribe", sessionId: "s1", doneOpId: "op-9" },
+        { type: "subscribe", sessionId: "s2" },
+        { type: "inbox_list" },
+      ]);
+
+      sockets[1]!.serverSend({ type: "inbox_changed" });
+      expect(transport.sent.map((t) => JSON.parse(t)).at(-1)).toEqual({ type: "inbox_changed" });
+    });
+
+    it("sends a message the phone sent meanwhile, once, after the restore", () => {
+      const { transport, sockets, runTimers } = reopening();
+      transport.emit({ type: "subscribe", sessionId: "s1" });
+      sockets[0]!.serverClose();
+      transport.emit({ type: "subscribe", sessionId: "s1" });
+      transport.emit({ type: "chat", sessionId: "s1", message: "still there?" });
+      runTimers();
+      sockets[1]!.open();
+      expect(sockets[1]!.sentFrames).toEqual([
+        { type: "subscribe", sessionId: "s1" },
+        { type: "chat", sessionId: "s1", message: "still there?", origin: "mobile" },
+      ]);
+    });
+
+    it("forgets an unsubscribed chat, and does not reopen after the channel or the bridge closed", () => {
+      const { bridge, transport, sockets, runTimers } = reopening();
+      transport.emit({ type: "subscribe", sessionId: "s1" });
+      transport.emit({ type: "unsubscribe", sessionId: "s1" });
+      sockets[0]!.serverClose();
+      runTimers();
+      sockets[1]!.open();
+      expect(sockets[1]!.sent).toEqual([]);
+
+      transport.drop();
+      runTimers();
+      bridge.close();
+      runTimers();
+      expect(sockets).toHaveLength(2);
+    });
+  });
 });
+

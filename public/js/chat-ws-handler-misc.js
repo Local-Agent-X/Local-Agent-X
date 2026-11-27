@@ -167,6 +167,9 @@ async function handleChatListChanged() {
       activeChat = null;
       try { window.activeChat = null; } catch {}
       if (typeof renderMessages === 'function') renderMessages();
+    } else if (activeChat && activeChat._needsHydrate && !(typeof window.isActive === 'function' && window.isActive(activeChat.id))) {
+      // The open chat moved on elsewhere (a turn from the phone ended): show it now.
+      await hydrateChat(activeChat);
     }
   } catch (e) { console.warn('[chat-list-changed] failed', e); }
 }

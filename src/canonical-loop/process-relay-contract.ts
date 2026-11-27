@@ -91,7 +91,7 @@ export const SESSION_EVENT_TYPES = new Set<string>([
   "visual", "bg_op_queued", "bg_op_queue_reordered", "bg_op_started",
   "bg_op_progress", "bg_op_completed", "bg_op_nudge", "reply_note", "av_blocked_warning",
   "worker_stream", "worker_done", "chat_op_started", "inject_queued",
-  "inject_consumed", "plan_mode_changed", "tool_chip", "op_heartbeat",
+  "inject_consumed", "plan_mode_changed", "tool_chip", "op_heartbeat", "user_message",
   "turn_provider", "prepare_progress",
 ]);
 const CANONICAL_EVENT_TYPES = new Set<string>([

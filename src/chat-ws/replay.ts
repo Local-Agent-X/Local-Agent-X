@@ -56,7 +56,8 @@ function subscriberHoldsTurn(chat: ActiveChat, has: SubscriberHas): boolean {
  * so a client whose local echo died (mid-turn reload) can materialize the
  * inline bubble at the right point in the timeline.
  *
- * Frame order: chat_op_started events FIRST (relative order preserved),
+ * Frame order: the turn's user_message, then chat_op_started events
+ * (relative order preserved),
  * then the per-lane wipes, then the ordered runs, then the remaining
  * buffered events in order. op_started precedes all stream text
  * chronologically, so it must replay before the wipes: the client wipes its
@@ -87,6 +88,12 @@ export function replayBufferedEvents(ws: WebSocket, sessionId: string, has: Subs
   // event buffer, so they are typed by hand.
   const send = (event: unknown) =>
     sendFrame(ws, { type: "event", sessionId, event: event as ServerEvent, _replay: true });
+  // The user's message first and the op start next, as they went out live: the
+  // turn's rows rebuild under the message that started it.
+  for (const event of chat.events) {
+    if (event.type !== "user_message") continue;
+    sendFrame(ws, { type: "event", sessionId, event, _replay: true });
+  }
   for (const event of chat.events) {
     if (event.type !== "chat_op_started") continue;
     sendFrame(ws, { type: "event", sessionId, event });
@@ -114,7 +121,7 @@ export function replayBufferedEvents(ws: WebSocket, sessionId: string, has: Subs
     }
   }
   for (const event of chat.events) {
-    if (event.type === "chat_op_started") continue;
+    if (event.type === "chat_op_started" || event.type === "user_message") continue;
     sendFrame(ws, { type: "event", sessionId, event });
   }
 }

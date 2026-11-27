@@ -82,6 +82,8 @@ function dispatchChatWsEvent(msg, checked) {
     // drops the queued styling once the server actually drained it.
     if (msg.event.type === 'inject_queued') return true;
     if (msg.event.type === 'inject_consumed') return handleInjectConsumed(msg);
+    // The turn's user message, sent from this or another device (chat-message-echo.js).
+    if (msg.event.type === 'user_message') return handleUserMessageEcho(msg);
 
     // Worker-pool / background-op events surface in the AGENTS sidebar
     // (not the chat thread). See chat-ws-handler-bg-ops.js.

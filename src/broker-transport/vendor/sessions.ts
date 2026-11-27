@@ -17,6 +17,16 @@ export type SessionSummary = {
   mode?: "code";
 };
 
+/** The desktop's chat list changed: a chat was started (on any device), renamed,
+ *  moved, got a new message, or was deleted. Sent on the chat channel to every device;
+ *  a device that shows the list reads GET /api/sessions again. */
+export type ChatListChangedFrame = { type: "chat_list_changed"; at: number };
+
+export function isChatListChangedFrame(raw: unknown): raw is ChatListChangedFrame {
+  const r = asRecord(raw);
+  return r !== null && r.type === "chat_list_changed" && asNumber(r.at) !== null;
+}
+
 /** Session ids are path and file-name safe on both devices: alphanumeric, dash and
  *  underscore, at most 64 characters. A client mints ids within this. */
 export const SESSION_ID_PATTERN = /^[a-zA-Z0-9_-]{1,64}$/;

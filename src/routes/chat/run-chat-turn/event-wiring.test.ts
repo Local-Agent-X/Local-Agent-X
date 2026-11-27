@@ -42,7 +42,7 @@ vi.mock("../system-prompt-augmentations.js", () => ({
 	augmentSystemPrompt: vi.fn(async () => {}),
 }));
 
-import { installEventWiring } from "./event-wiring.js";
+import { installEventWiring, userMessageEvent } from "./event-wiring.js";
 
 async function makeWiring() {
 	const sse: ServerEvent[] = [];
@@ -63,6 +63,7 @@ async function makeWiring() {
 	const wiring = await installEventWiring({
 		sessionId: "sess-wiring-test",
 		message: "hello",
+		typed: "hello",
 		attachments: [],
 		prepared: { provider: "xai", model: "grok", tools: [], images: [] } as never,
 		ctx: ctx as never,
@@ -70,8 +71,24 @@ async function makeWiring() {
 		abortController,
 		onChatRegistered: () => {},
 	});
-	return { wiring, sse, ws, abortController };
+	// The user's row goes out as the turn registers; the cases below start after it.
+	const echoed = ws.splice(0);
+	return { wiring, sse, ws, abortController, echoed };
 }
+
+describe("the user's message", () => {
+	it("goes to the chat socket as the turn registers, never to the SSE caller", async () => {
+		const { echoed, sse } = await makeWiring();
+		expect(echoed).toEqual([{ type: "user_message", text: "hello" }]);
+		expect(sse).toEqual([]);
+	});
+
+	it("carries the turn's pictures by name and stored path", () => {
+		expect(userMessageEvent("look", [{ name: "a.jpg", url: "/uploads/att-1.jpg", filePath: "/x" } as never])).toEqual({
+			type: "user_message", text: "look", images: [{ name: "a.jpg", url: "/uploads/att-1.jpg" }],
+		});
+	});
+});
 
 const DONE: ServerEvent = { type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } };
 

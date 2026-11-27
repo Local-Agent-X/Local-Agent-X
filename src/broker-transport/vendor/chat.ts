@@ -85,6 +85,13 @@ export type InjectConsumedEvent = { type: "inject_consumed"; injectId: string; m
  *  When the desktop knows, it says what the turn is in: `phase` is a lane name
  *  ("stream", "reasoning", "tool") and `activeTool` the tool still running. */
 export type OpHeartbeatEvent = { type: "op_heartbeat"; opId?: string; phase?: string; activeTool?: string };
+/** A picture on a user message, as the desktop stored it (an `/uploads/<file>` path). */
+export type UserMessageImage = { name: string; url: string };
+/** The user's message that started this turn, as the desktop received it from any
+ *  device. Every device viewing the chat gets it, the sender included, and a replay
+ *  sends it again: a device that already shows the message (it sent it, or holds it in
+ *  history) leaves it alone. */
+export type UserMessageEvent = { type: "user_message"; text: string; images?: UserMessageImage[] };
 
 export type ChatServerEvent =
   | StreamDeltaEvent
@@ -102,7 +109,8 @@ export type ChatServerEvent =
   | ApprovalTimeoutEvent
   | InjectQueuedEvent
   | InjectConsumedEvent
-  | OpHeartbeatEvent;
+  | OpHeartbeatEvent
+  | UserMessageEvent;
 
 /** The envelope every chat event arrives in. */
 export type ChatEventFrame = { type: "event"; sessionId: string; event: ChatServerEvent };
@@ -266,9 +274,26 @@ function parseEvent(raw: Record<string, unknown>): ChatServerEvent | null {
     }
     case "op_heartbeat":
       return parseHeartbeat(raw);
+    case "user_message":
+      return parseUserMessage(raw);
     default:
       return null;
   }
+}
+
+/** A user message keeps its text and the pictures that name a file; a picture
+ *  without a url is dropped. */
+function parseUserMessage(raw: Record<string, unknown>): UserMessageEvent | null {
+  const text = asString(raw.text);
+  if (text === null) return null;
+  const images: UserMessageImage[] = [];
+  for (const item of Array.isArray(raw.images) ? raw.images : []) {
+    const r = asRecord(item);
+    const url = r ? asString(r.url) : null;
+    if (r === null || url === null || url === "") continue;
+    images.push({ name: asString(r.name) ?? "", url });
+  }
+  return images.length > 0 ? { type: "user_message", text, images } : { type: "user_message", text };
 }
 
 /** A heartbeat keeps only the fields a client may show; anything else it carries

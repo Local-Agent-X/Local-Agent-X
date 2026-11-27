@@ -247,6 +247,24 @@ export function broadcastAll(frame: GlobalFrame): number {
   return tabs;
 }
 
+// A saved chat, a deleted one, a chat started on the phone: every device that
+// shows the chat list re-reads it on `chat_list_changed`. A turn saves its chat
+// more than once in a few milliseconds, so announcements inside this window go
+// out as one frame.
+const LIST_CHANGED_COALESCE_MS = 150;
+let listChangedTimer: NodeJS.Timeout | null = null;
+
+/** Tell every connected client (tabs, the desktop window, the phone's bridge)
+ *  that the chat list changed. Coalesced; the frame carries the send time. */
+export function announceChatListChanged(): void {
+  if (listChangedTimer) return;
+  listChangedTimer = setTimeout(() => {
+    listChangedTimer = null;
+    broadcastAll({ type: "chat_list_changed", at: Date.now() });
+  }, LIST_CHANGED_COALESCE_MS);
+  listChangedTimer.unref();
+}
+
 export interface TerminateOptions {
   /** Abort the in-flight provider stream + release the turn lock.
    *  `true` for user-initiated stop; `false` for transport-level failures

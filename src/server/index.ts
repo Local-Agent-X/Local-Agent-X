@@ -1,6 +1,6 @@
 import { AppRegistry } from "../app-runtime/index.js";
 import { AgentRunStore, AgentTemplateStore, IssueStore, ProjectStore } from "../agent-store/index.js";
-import { broadcastAll } from "../chat-ws/index.js";
+import { announceChatListChanged, broadcastAll } from "../chat-ws/index.js";
 import type { LAXConfig } from "../types.js";
 import type { ServerContext } from "../server-context.js";
 import { bootstrapServices } from "./bootstrap-services.js";
@@ -250,7 +250,7 @@ export async function startServer(config: LAXConfig) {
     } catch { return null; }
   });
 
-  const sessionHelpers = createSessionHelpers({ sessionStore, memoryIndex, dataDir, maxCached: config.maxCachedSessions });
+  const sessionHelpers = createSessionHelpers({ sessionStore, memoryIndex, dataDir, maxCached: config.maxCachedSessions, onListedChatSaved: announceChatListChanged });
   const { sessions, getOrCreateSession, saveSession, flushSession, dropSession } = sessionHelpers;
   const chatRemoval = { dataDir, sessionStore, memoryIndex, getOrCreateSession, saveSession, flushSession, dropSession };
   bindChatRemoval(chatRemoval);

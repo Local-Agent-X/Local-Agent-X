@@ -8,6 +8,9 @@ const logger = createLogger("sync.conflict-resolver");
 
 export type GitFn = (...args: string[]) => Promise<string>;
 
+/** `git status --porcelain` codes for a path the merge left unmerged. */
+const UNMERGED = new Set(["DD", "AU", "UD", "UA", "DU", "AA", "UU"]);
+
 /**
  * Union the two sides of every conflict hunk, leaving non-conflicted text
  * byte-for-byte untouched. Emits ours-lines then the theirs-lines not already
@@ -72,7 +75,16 @@ export function mergeJsonSides(oursText: string, theirsText: string): string | n
 export async function resolveConflicts(syncDir: string, git: GitFn): Promise<void> {
   try {
     const status = await git("status", "--porcelain");
-    const conflicted = status.split("\n").filter(l => l.startsWith("UU ") || l.startsWith("AA "));
+    const unmerged = status.split("\n").filter(l => UNMERGED.has(l.slice(0, 2)));
+    const conflicted = unmerged.filter(l => l.startsWith("UU ") || l.startsWith("AA "));
+    // One side deleted or added a file the other changed. Nothing is lost by
+    // keeping whatever the working tree holds: the side that changed it.
+    // Left unmerged, they failed the commit below and the merge stayed open.
+    for (const line of unmerged.filter(l => !conflicted.includes(l))) {
+      const file = line.slice(3).trim();
+      if (existsSync(join(syncDir, file))) await git("add", file);
+      else await git("rm", "--cached", "--quiet", file);
+    }
     for (const line of conflicted) {
       const file = line.slice(3).trim();
       const fullPath = join(syncDir, file);
@@ -102,7 +114,7 @@ export async function resolveConflicts(syncDir: string, git: GitFn): Promise<voi
       }
       await git("add", file);
     }
-    if (conflicted.length > 0) await git("commit", "-m", "auto-merge: union merge resolved conflicts");
+    if (unmerged.length > 0) await git("commit", "-m", "auto-merge: union merge resolved conflicts");
   } catch (e) {
     logger.warn(`[sync] conflict resolution failed: ${(e as Error).message}`);
   }

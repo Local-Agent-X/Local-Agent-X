@@ -74,14 +74,30 @@ export function pushFailureMessage(
   mergeErr?: string,
 ): string {
   if (isAuthRejection(pushErr, rebaseErr, mergeErr)) {
-    return `${AUTH_REJECTION_MESSAGE} Original git error: ${firstLine(pushErr)}`;
+    return `${AUTH_REJECTION_MESSAGE} Original git error: ${gitCause(pushErr)}`;
   }
   const reasons: string[] = [];
-  if (rebaseErr) reasons.push(`rebase failed: ${firstLine(rebaseErr).slice(0, 200)}`);
-  if (mergeErr) reasons.push(`merge fallback failed: ${firstLine(mergeErr).slice(0, 200)}`);
+  if (rebaseErr) reasons.push(`rebase failed: ${gitCause(rebaseErr).slice(0, 300)}`);
+  if (mergeErr) reasons.push(`merge fallback failed: ${gitCause(mergeErr).slice(0, 300)}`);
   const detail = reasons.length > 0 ? ` (root cause: ${reasons.join("; ")})` : "";
   return `[sync] push rejected — remote has commits this machine doesn't have${detail}. ` +
-    `Hit Force Pull to integrate the remote state, then sync again. Original git error: ${firstLine(pushErr)}`;
+    `Hit Force Pull to integrate the remote state, then sync again. Original git error: ${gitCause(pushErr)}`;
 }
 
-const firstLine = (s: string): string => s.split("\n")[0];
+/**
+ * The line of a failed git command that says why. A pull prints the
+ * fetch's "From https://…" first, and the error used to show only that line
+ * for both of its attempts, so it never named the conflicting files
+ * (2026-11-27). CONFLICT lines win, then the last error, fatal or refusal
+ * line, then the last line.
+ */
+export function gitCause(s: string): string {
+  // A fetch's own progress ("From <url>", "* branch main -> FETCH_HEAD") is never the cause.
+  const lines = s.split("\n").map((l) => l.replace(/^git [\w-]+: /, "").trim()).filter((l) => l && !/^(From \S|\* branch )/.test(l));
+  const conflicts = lines.filter((l) => /^CONFLICT\b/.test(l));
+  if (conflicts.length > 0) {
+    return conflicts.slice(0, 3).join("; ") + (conflicts.length > 3 ? `; and ${conflicts.length - 3} more` : "");
+  }
+  const cause = [...lines].reverse().find((l) => /^(error|fatal)\b/i.test(l) || /rejected|would be overwritten|not possible|unmerged|not concluded/i.test(l));
+  return cause ?? lines[lines.length - 1] ?? "git printed nothing but fetch progress; the cause is in the server log";
+}

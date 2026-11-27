@@ -179,6 +179,43 @@ export class AgentSync {
         logger.warn("[sync] removed corrupt stranded rebase state (.git/rebase-*)");
       }
     }
+    // A merge left half done (a killed git, or a sync from before the merge
+    // fallback resolved its conflicts) refuses every later pull and commit.
+    if (existsSync(join(gitDir, "MERGE_HEAD"))) {
+      try {
+        await this.git("merge", "--abort");
+        logger.warn("[sync] undid a merge an earlier sync left half done");
+      } catch (e) {
+        logger.warn(`[sync] could not undo a half-done merge: ${(e as Error).message}`);
+      }
+    }
+  }
+
+  /**
+   * Merge origin/main into this machine's commits. git exits non-zero exactly
+   * when the merge conflicts, so the resolver runs from that failure: placed
+   * after the pull, push()'s fallback never reached it and left the repo
+   * mid-merge, and the other machine's sync failed every time (2026-11-27).
+   * What the resolver cannot settle is aborted, so the repo is never left
+   * mid-merge, and the error names the files.
+   */
+  private async mergeRemote(): Promise<void> {
+    try {
+      await this.git("pull", "--no-rebase", "origin", "main");
+      return;
+    } catch (e) {
+      if (!this.inMerge()) throw e;
+    }
+    await resolveConflicts(this.syncDir, this.git);
+    if (!this.inMerge()) return;
+    let left = "";
+    try { left = (await this.git("diff", "--name-only", "--diff-filter=U")).split("\n").filter(Boolean).join(", "); } catch { /* named below as unknown */ }
+    try { await this.git("merge", "--abort"); } catch { /* recoverStrandedGitState clears it at the next sync */ }
+    throw new Error(`git pull: CONFLICT not resolved in ${left || "the merge"}; the merge was undone and nothing was lost`);
+  }
+
+  private inMerge(): boolean {
+    return existsSync(join(this.syncDir, ".git", "MERGE_HEAD"));
   }
 
   // Checked after init(), whose set-url leaves origin naming the configured
@@ -248,8 +285,7 @@ export class AgentSync {
         rebaseErr = e as Error;
         try { await this.git("rebase", "--abort"); } catch { /* nothing to abort */ }
         try {
-          await this.git("pull", "--no-rebase", "origin", "main");
-          await resolveConflicts(this.syncDir, this.git);
+          await this.mergeRemote();
         } catch (e2) {
           mergeErr = e2 as Error;
         }
@@ -301,7 +337,7 @@ export class AgentSync {
       }
       let hasChanges = true;
       try { if (!await this.git("diff", "HEAD", "origin/main", "--stat")) hasChanges = false; } catch {}
-      if (hasChanges) { try { await this.git("pull", "--no-rebase", "origin", "main"); } catch { await resolveConflicts(this.syncDir, this.git); } }
+      if (hasChanges) await this.mergeRemote();
       const report = await copyFromSync(this.dataDir, this.syncDir, this.config);
       if (report.pulledSessionIds.length > 0) this.onSessionsPulled?.(report.pulledSessionIds);
       if (report.erasedSessionIds.length > 0) this.onSessionsErased?.(report.erasedSessionIds);

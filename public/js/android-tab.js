@@ -36,6 +36,28 @@
     return ready.filter(function (d) { return d.heldBy; })[0] || ready[0] || null;
   }
 
+  function nameOf(device) {
+    return device.model ? device.model.replace(/_/g, '-') + ' (' + device.serial + ')' : device.serial;
+  }
+
+  // What to say when no device is ready to use. A phone whose USB link kept
+  // dropping read as "No device connected" while the owner looked at it
+  // plugged in (2026-11-26): say which device is there but not usable and
+  // why, or which one was here and when it went.
+  var lastSeen = null;
+  function nothingReadyText(devices) {
+    var list = devices || [];
+    var waiting = list.filter(function (d) { return d.state === 'unauthorized'; })[0];
+    if (waiting) return nameOf(waiting) + ' is plugged in but has not allowed USB debugging: unlock it and tap Allow.';
+    var stuck = list.filter(function (d) { return d.state === 'offline'; })[0];
+    if (stuck) return nameOf(stuck) + ' is plugged in but not answering: unplug it and plug it back in.';
+    if (lastSeen) {
+      var at = new Date(lastSeen.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      return lastSeen.name + ' dropped off at ' + at + '. Check the cable, and the phone for an "Allow USB debugging?" prompt.';
+    }
+    return 'No device connected.';
+  }
+
   function devicesUrl(serial) {
     return '/api/android/devices' + (serial ? '?view=' + encodeURIComponent(serial) : '');
   }
@@ -57,6 +79,8 @@
       var device = deviceToShow(data.devices);
       if (device) {
         currentSerial = device.serial;
+        // An emulator this app stopped did not drop off; only a phone is remembered.
+        lastSeen = device.serial.indexOf('emulator-') === 0 ? null : { name: nameOf(device), at: Date.now() };
         setStatus((device.model ? device.serial + ' (' + device.model + ')' : device.serial) + holderLabel(device.heldBy));
         setButtons(device.serial);
         // The device changed (or this is the first look): start its feed now,
@@ -64,7 +88,7 @@
         if (device.serial !== asked) fetch(devicesUrl(device.serial)).catch(function () {});
       } else {
         currentSerial = null;
-        setStatus('No device connected.');
+        setStatus(nothingReadyText(data.devices));
         setButtons(null);
       }
     } catch (e) {

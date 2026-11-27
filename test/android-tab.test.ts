@@ -93,6 +93,36 @@ describe("which device the tab shows", () => {
     expect(t.element("android-status").textContent).toBe("No device connected.");
     expect(t.element("android-start-btn").disabled).toBe(false);
   });
+
+  // A phone whose USB link kept dropping read as "No device connected" while
+  // the owner looked at it plugged in (2026-11-26).
+  it("names a phone that dropped off, and when", async () => {
+    const devices: Device[] = [PHONE];
+    const t = load(devices);
+    await t.tab.refresh();
+    devices.length = 0;
+    await t.tab.refresh();
+    const said = t.element("android-status").textContent ?? "";
+    expect(said).toMatch(/^SM-S948U1 \(R3GLA04C0JK\) dropped off at .+\. Check the cable/);
+  });
+
+  it("says what to do with a phone that is plugged in but not usable", async () => {
+    const waiting = load([{ ...PHONE, state: "unauthorized" }]);
+    await waiting.tab.refresh();
+    expect(waiting.element("android-status").textContent).toContain("has not allowed USB debugging: unlock it and tap Allow");
+    const stuck = load([{ ...PHONE, state: "offline" }]);
+    await stuck.tab.refresh();
+    expect(stuck.element("android-status").textContent).toContain("not answering: unplug it and plug it back in");
+  });
+
+  it("an emulator that was stopped is not reported as dropped", async () => {
+    const devices: Device[] = [EMULATOR];
+    const t = load(devices);
+    await t.tab.refresh();
+    devices.length = 0;
+    await t.tab.refresh();
+    expect(t.element("android-status").textContent).toBe("No device connected.");
+  });
 });
 
 describe("the tab opens itself when the chat's agent uses the android tool", () => {

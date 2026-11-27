@@ -476,8 +476,15 @@ body.platform-darwin #sidebar-agents-controls{top:3px;right:14px}
 .turn-now.opens-group{cursor:pointer}
 .turn-now.opens-group:hover .turn-now-what,.turn-now.opens-group:focus-visible .turn-now-what{color:var(--text);text-decoration:underline;text-underline-offset:3px}
 .turn-now.opens-group:focus-visible{outline:1px solid var(--accent);outline-offset:2px;border-radius:4px}
+/* On the newest group's line (chat-turn-flow.js placeTurnNow): inline, after
+   the summary; the header is the click target. Its dot replaces the gear. */
+.activity-group-header .turn-now.on-group{display:inline-flex;margin:0;gap:6px;font-size:inherit;min-width:0}
+.activity-group-header .turn-now.on-group::before{width:7px;height:7px}
+.activity-label:has(+ .activity-count + .turn-now.on-group)::after{content:' ·';opacity:.6}
+.activity-group-header:has(.turn-now.on-group) .activity-tick{display:none}
+.activity-group-header:has(.turn-now.on-group) .activity-label{flex:0 1 auto}
 /* The status line says Writing; the text cursor under it would be a second, misplaced signal. */
-.msg-body.streaming:has(> .turn-now)::after{display:none}
+.msg-body.streaming:has(.turn-now)::after{display:none}
 /* A stretch of tool calls: one line of text that opens to its calls
    (chat-tool-cards.js ensureActivityGroup), not a box. */
 .activity-group{margin:6px 0}

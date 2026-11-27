@@ -40,13 +40,13 @@ beforeEach(() => {
   g.mdPreviewMode = true;
   g.thinkingHTML = () => '<div class="thinking">…</div>';
   console.error = (...a: unknown[]) => { throw new Error("render error: " + a.map(String).join(" ")); };
-  Object.assign(g, load<object>("chat-tool-cards.js", "{ appendToolCardGrouped, attachMediaPreview, toolSummary }"));
+  Object.assign(g, load<object>("chat-tool-cards.js", "{ appendToolCardGrouped, attachMediaPreview, toolSummary, toggleActivityGroup }"));
   Object.assign(g, load<object>("chat-declassify-action.js", "{ isKernelBlockNotice, renderKernelBlockNotice }"));
   Object.assign(g, load<object>("chat-file-changes.js", "{ fileChangesOf, renderFileChangesCard, changesNoticeCovers }"));
   Object.assign(g, load<object>("chat-cards.js", "{ cardsOf, renderChatCards }"));
   Object.assign(g, load<object>("chat-render-notices.js", "{ renderDeleteNotice, renderChangesNotice, renderReviewNotice, renderLearningNotice, renderHandoffNotice }"));
   Object.assign(g, load<object>("chat-progress.js", "{ isProgressTool, renderReplyClose }"));
-  const flow = load<{ formatElapsed: (ms: number) => string }>("chat-turn-flow.js", "{ isSegmentBreak, toolSegmentsOf, renderTurnNow, activitySummaryOf, turnTokenEstimate, formatElapsed }");
+  const flow = load<{ formatElapsed: (ms: number) => string }>("chat-turn-flow.js", "{ isSegmentBreak, toolSegmentsOf, renderTurnNow, activitySummaryOf, turnTokenEstimate, placeTurnNow, openRunningGroup, formatElapsed }");
   Object.assign(g, flow);
   formatElapsed = flow.formatElapsed;
   A = load<Artifacts>("chat-render-artifacts.js", "{ renderTimelineBlocks, _renderAssistantToolArtifacts, _buildLiveAssistantInto }");
@@ -176,15 +176,26 @@ describe("a running reply says what it is doing now", () => {
     chips: [], progressByTool: {}, approvals: [], notices: [], lastContentMs: Date.now(),
   });
 
-  it("the call in flight and how long it has run, as the bubble's last line", () => {
+  // 2026-11-27: the owner asked for the live status on the newest group's own line.
+  it("the call in flight and how long it has run, on the newest group's line", () => {
     const startedMs = Date.now() - (6 * 60 + 12) * 1000;
     const bubble = A._buildLiveAssistantInto(document.body, store([start("j", "holdout_judge", "t1", { startedMs })]));
-    const body = bubble.querySelector(".msg-body") as HTMLElement;
-    const now = body.lastElementChild as HTMLElement;
-    expect(now.classList.contains("turn-now")).toBe(true);
+    const now = bubble.querySelector(".activity-group-header .turn-now.on-group") as HTMLElement;
+    expect(now).toBeTruthy();
     // A tool with no phrase of its own is named, never shown as raw arguments.
     expect(now.querySelector(".turn-now-what")!.textContent).toBe("Running holdout_judge");
     expect(now.querySelector(".turn-now-elapsed")!.textContent).toBe("6m 12s");
+    // One line: no second status line under the group.
+    expect(bubble.querySelectorAll(".turn-now")).toHaveLength(1);
+  });
+
+  it("text written after the newest group keeps the line at the bottom", () => {
+    const s = { ...store([start("a", "grep", "t1", { startedMs: Date.now() }), end("a", "grep")]), content: "Scoring the app. Now writing.", blocks: [text("t1", "Scoring the app."), text("t2", "Now writing.")] };
+    const body = A._buildLiveAssistantInto(document.body, s).querySelector(".msg-body") as HTMLElement;
+    const now = body.lastElementChild as HTMLElement;
+    expect(now.classList.contains("turn-now")).toBe(true);
+    expect(now.classList.contains("on-group")).toBe(false);
+    expect(now.querySelector(".turn-now-what")!.textContent).toBe("Writing");
   });
 
   it("a tool with its own phrase says it in its own words", () => {
@@ -213,18 +224,19 @@ describe("a running reply says what it is doing now", () => {
     expect(now.querySelector(".turn-now-tokens")!.textContent).toMatch(/^↓ ~2\.3k tokens$/);
   });
 
-  it("clicking the line while a call runs opens the group the call is in", () => {
+  it("the whole line, status included, is the group's header: clicking it opens the calls", () => {
     const s = store([start("a", "grep", "t1", { startedMs: Date.now() }), end("a", "grep"), start("b", "bash", "t1", { startedMs: Date.now(), args: { command: "npm test" } })]);
     const bubble = A._buildLiveAssistantInto(document.body, s);
     const group = bubble.querySelector(".activity-group") as HTMLElement;
-    expect(group.classList.contains("running")).toBe(true);
+    const header = group.querySelector(".activity-group-header") as HTMLElement;
+    expect(header.contains(bubble.querySelector(".turn-now"))).toBe(true);
     expect(group.classList.contains("open")).toBe(false);
-    (bubble.querySelector(".turn-now.opens-group") as HTMLElement).click();
+    (g as unknown as { toggleActivityGroup: (h: HTMLElement) => void }).toggleActivityGroup(header);
     expect(group.classList.contains("open")).toBe(true);
-    expect(group.querySelector(".activity-group-header")!.getAttribute("aria-expanded")).toBe("true");
-    // Between calls there is no group to open: the line is not a button.
-    const thinking = A._buildLiveAssistantInto(document.body, { ...store([]), blocks: [think("r1", "hm")] });
-    expect(thinking.querySelector(".turn-now")!.classList.contains("opens-group")).toBe(false);
+    expect(header.getAttribute("aria-expanded")).toBe("true");
+    // The status inside the header does not open the group a second time (which would close it).
+    (g as unknown as { openRunningGroup: (l: HTMLElement) => void }).openRunningGroup(bubble.querySelector(".turn-now") as HTMLElement);
+    expect(group.classList.contains("open")).toBe(true);
   });
 
   it("a finished reply's paint has no status line", () => {

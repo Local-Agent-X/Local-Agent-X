@@ -200,10 +200,34 @@ function _setCallClock(span, ms) {
   span.textContent = ms >= _CALL_CLOCK_AFTER_MS ? formatElapsed(ms) + ' of' : '';
 }
 
+// Where the live line goes. When the newest thing in the reply is a group of
+// calls (no text written after it), the line rides on that group's own line,
+// "Used tool_search, ran 2 commands · Thinking… (19s · ↓ ~376 tokens) ›", and
+// the whole line opens the group: the owner asked for one line, not two
+// (2026-11-27). Text after the newest group: the line stays at the bottom.
+function placeTurnNow(bodyEl, line) {
+  const slots = [...bodyEl.children].filter((c) => c.classList.contains('tool-segment'));
+  const groups = bodyEl.querySelectorAll('.activity-group');
+  const group = groups[groups.length - 1];
+  const header = group && group.querySelector('.activity-group-header');
+  // The newest group is in the newest segment, and that segment has no text after it.
+  const newestSlot = slots[slots.length - 1];
+  const newest = !!header && (slots.length === 0 || (newestSlot && newestSlot.contains(group)));
+  if (!newest) { bodyEl.appendChild(line); return; }
+  line.classList.add('on-group');
+  line.removeAttribute('role');
+  line.removeAttribute('tabindex');
+  line.removeAttribute('title');
+  header.insertBefore(line, header.querySelector('.activity-chevron'));
+}
+if (typeof window !== 'undefined') window.placeTurnNow = placeTurnNow;
+
 // The live line was clicked: open the group the running call is in (the
 // newest running one in this reply) and bring it into view. The bubble is
 // rebuilt on every event; its open state carries over (chat-render-open-state.js).
+// On a group's own line the click is the line's: the header opens it.
 function openRunningGroup(line) {
+  if (line && line.closest('.activity-group-header')) return;
   const body = line && line.closest('.msg-body');
   if (!body) return;
   const running = body.querySelectorAll('.activity-group.running');

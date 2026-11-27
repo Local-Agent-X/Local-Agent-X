@@ -252,7 +252,7 @@ function _buildLiveAssistantInto(parent, store) {
     tokens: turnTokenEstimate(store),
     writing: !contentIdle && _endsInText(blocks),
   } : null) : null;
-  if (nowLine) bodyEl.appendChild(nowLine);
+  if (nowLine) placeTurnNow(bodyEl, nowLine);
   return div;
 }
 

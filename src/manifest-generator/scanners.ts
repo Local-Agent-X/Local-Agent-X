@@ -116,7 +116,7 @@ export function scanApps(): AppEntry[] {
       const appDir = join(appsDir, name);
       try {
         const files = readdirSync(appDir).filter(f => !f.startsWith("."));
-        apps.push({ name, path: `workspace/apps/${name}`, files });
+        apps.push({ name, path: `workspace/apps/${name}`, files, modifiedMs: statSync(appDir).mtimeMs });
       } catch {}
     }
   } catch {}

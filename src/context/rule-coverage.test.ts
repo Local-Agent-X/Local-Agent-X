@@ -16,7 +16,20 @@
  * outside the prompt budget, so they always count.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+
+// The App Map is this repo's real map with the most apps it can name, each with
+// a long name, not the manifest on this machine: that file lists the owner's
+// own apps, so the test passed with none (CI) and failed on a PC with 141.
+vi.mock("../manifest-generator/index.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../manifest-generator/index.js")>();
+  const { summarizeManifest, APP_MAP_APPS_SHOWN } = await import("../manifest-generator/summary.js");
+  const apps = Array.from({ length: APP_MAP_APPS_SHOWN + 100 }, (_, k) => ({
+    name: `a-fairly-long-app-name-${k}`, path: `workspace/apps/a-fairly-long-app-name-${k}`, files: ["index.html"], modifiedMs: k,
+  }));
+  const summary = summarizeManifest({ ...actual.generateManifest(), apps });
+  return { ...actual, getManifestSummary: () => summary };
+});
 import { createSystemPromptBuilder, type RenderedPromptSection } from "./system-prompt-builder.js";
 import { applyCapabilityAwarePromptDegradation } from "./prompt-degradation.js";
 import { allRules, deliveredChannels, includedPartIds, type RuleId } from "./rule-registry.js";

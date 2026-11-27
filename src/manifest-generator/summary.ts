@@ -43,6 +43,11 @@ export function getManifestSummary(): string {
   } catch {
     return "";
   }
+  return summarizeManifest(manifest);
+}
+
+/** The App Map text for `manifest`. */
+export function summarizeManifest(manifest: AppManifest): string {
 
   // Resolve APP_URL so the agent gets a real URL, not a placeholder
   let appUrl = "http://127.0.0.1:7007";
@@ -64,10 +69,8 @@ export function getManifestSummary(): string {
     "### Agents Page Tabs",
     ...manifest.agentTabs.map(t => `- **${t.name}** — ${t.description}`),
     "",
-    "### Built Apps",
-    ...(manifest.apps.length > 0
-      ? manifest.apps.map(a => `- **${a.name}** (${a.path}/) — ${a.files.length} files`)
-      : ["- No apps built yet"]),
+    "### Built Apps (each in workspace/apps/<name>/)",
+    ...builtAppLines(manifest.apps),
     "",
     "### Bridges",
     ...manifest.bridges.map(b => `- ${b}`),
@@ -75,8 +78,10 @@ export function getManifestSummary(): string {
     "### Integrations Available",
     ...manifest.integrations.map(i => `- ${i}`),
     "",
+    // A count and the way in, not names: the model already holds the tools it
+    // was given, and 30 names in scan order cost ~150 tokens on every turn.
     `### Tools: ${manifest.tools.length} total`,
-    `Available tools include: ${manifest.tools.slice(0, 30).map(t => t.name).join(", ")}${manifest.tools.length > 30 ? `, and ${manifest.tools.length - 30} more (use tool_search)` : ""}`,
+    "The ones not already loaded are found with tool_search.",
     "",
     `### API Routes: ${manifest.apiRoutes.length} endpoints — call via http_request when no dedicated tool fits`,
     ...summarizeRoutesByResource(manifest.apiRoutes),
@@ -101,6 +106,24 @@ export function getManifestSummary(): string {
   ];
 
   return lines.join("\n").replace(/\{\{APP_URL\}\}/g, appUrl);
+}
+
+/** How many built apps the App Map names; the rest are a count and a pointer. */
+export const APP_MAP_APPS_SHOWN = 10;
+
+/** The App Map rides every turn, so it cannot grow with the user's apps: at
+ *  141 apps their list was ~10k characters, and on a local 65k window it
+ *  pushed the "How to work" rules out of the prompt (rule-coverage.test.ts).
+ *  The most recently changed are named, once each (the folder follows from
+ *  the name); `app_list` has every one. */
+export function builtAppLines(apps: AppManifest["apps"]): string[] {
+  if (apps.length === 0) return ["- No apps built yet"];
+  const newest = [...apps].sort((a, b) => (b.modifiedMs ?? 0) - (a.modifiedMs ?? 0)).slice(0, APP_MAP_APPS_SHOWN);
+  const rest = apps.length - newest.length;
+  const names = newest.map(a => a.name).join(", ");
+  return [rest > 0
+    ? `- Most recently changed: ${names}; and ${rest} more. \`app_list\` lists every app`
+    : `- ${names}`];
 }
 
 /** Group API routes by their first /api/<resource> segment and emit one

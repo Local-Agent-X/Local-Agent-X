@@ -15,5 +15,6 @@ export interface PageEntry { name: string; path: string; description: string }
 export interface TabEntry { name: string; id: string; description: string }
 export interface RouteEntry { method: string; path: string; description: string }
 export interface ToolSummary { name: string; description: string; readOnly: boolean }
-export interface AppEntry { name: string; path: string; files: string[] }
+/** `modifiedMs`: the app folder's last change, which orders the App Map's list. */
+export interface AppEntry { name: string; path: string; files: string[]; modifiedMs?: number }
 export interface ConfigFileEntry { path: string; description: string }

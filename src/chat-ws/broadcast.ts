@@ -12,6 +12,7 @@ import { hasChatHandlerPending } from "../ops/session-bridge.js";
 import { isHiddenFromChatLists } from "../memory/synthetic-sessions.js";
 import { notifySessionEventObservers, sessionObserved } from "./session-event-observers.js";
 import { activeChats, browserClients, clients } from "./state.js";
+import { noteSent } from "./connection-log.js";
 
 // How long a terminated ActiveChat lingers before its buffer is swept.
 // Matches manager.onEvent's natural-`done` sweep (5 min) so a stopped chat
@@ -148,6 +149,7 @@ export function broadcastToSession(sessionId: string, event: ServerEvent): void 
     if (subs.has(sessionId) && ws.readyState === 1 /* OPEN */) {
       if (droppable && ws.bufferedAmount > BACKPRESSURE_MAX_BUFFERED) continue;
       ws.send(payload);
+      noteSent(ws, sessionId, event.type);
     }
   }
 }

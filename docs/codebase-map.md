@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 74 top-level dirs · 74 live · 0 with no live importer · 2209 non-test source files · 59 oversized · 277 nearing the size cap.
+**Totals:** 74 top-level dirs · 74 live · 0 with no live importer · 2210 non-test source files · 60 oversized · 276 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -32,7 +32,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/data-lineage/` | 64 | 12 | L |  |
 | `src/agency/` | 55 | 41 | XL |  |
 | `src/browser/` | 55 | 95 | XL | 5 |
-| `src/chat-ws/` | 53 | 24 | L |  |
+| `src/chat-ws/` | 53 | 25 | L | 1 |
 | `src/tool-policy/` | 48 | 22 | L |  |
 | `src/local-runtimes/` | 45 | 28 | XL |  |
 | `src/threat/` | 43 | 13 | L |  |
@@ -269,6 +269,7 @@ Burn-down targets: find the job that grew and move it to a module named after it
 - `src/canonical-loop/session-bridge-observer.ts#recordCanonicalEventWithSink`
 - `src/canonical-loop/turn-loop/decide-outcome.ts#decideTurnOutcome`
 - `src/canonical-loop/worker.ts#drive`
+- `src/chat-ws/message-router.ts#ws.on:callback`
 - `src/config.ts#loadConfig`
 - `src/mcp-client/manifest.ts#assessMcpManifest`
 - `src/memory/index-schema-migrations.ts#db.transaction:callback`
@@ -380,7 +381,6 @@ job. Comments are free: never cut them to fit.
 - `src/agency/handler-tools.ts#createHandlerTools` — 100+ own code lines (cap 100)
 - `src/auto-build/workflow-resolver.ts#candidateFromEvidence` — 100+ own code lines (cap 100)
 - `src/canonical-loop/adapters/anthropic/stream-consume.ts#streamConsume` — 100+ own code lines (cap 100)
-- `src/chat-ws/message-router.ts#ws.on:callback` — 100+ own code lines (cap 100)
 - `src/anthropic-client/stream-cli.ts#streamViaColdSpawn` — 90+ own code lines (cap 100)
 - `src/app-renderer/components.ts#renderComponent` — 90+ own code lines (cap 100)
 - `src/auto-build/loop/run-chunk-once.ts#runChunkOnce` — 90+ own code lines (cap 100)

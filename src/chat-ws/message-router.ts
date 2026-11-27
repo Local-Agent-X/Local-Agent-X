@@ -10,6 +10,7 @@
 // Subscribe / unsubscribe mutate the per-connection subscription set;
 // stop / reconnect_op / etc. operate on session-level state.
 
+import { noteClientReport, noteSubscribed } from "./connection-log.js";
 import type { WebSocket } from "ws";
 import { createLogger } from "../logger.js";
 import { getApprovalManager } from "../approval-manager.js";
@@ -77,8 +78,13 @@ export function attachMessageRouter(ctx: RouterContext): void {
 
     if (handleProcessRelayAck(msg, subscriptions)) return;
 
+    if (type === "client_diag") {
+      noteClientReport(ws, msg);
+      return;
+    }
     if (type === "subscribe" && sessionId) {
       subscriptions.add(sessionId);
+      noteSubscribed(ws, sessionId);
       setImmediate(() => reconcileAllPendingProcessRelays(sessionId));
       // CT-3: coalesce buffered stream deltas into one `replace` on replay so
       // a mid-turn reconnect doesn't append the whole partial onto the partial

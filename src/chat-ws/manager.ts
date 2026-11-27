@@ -3,6 +3,7 @@
 // release), failChat (terminal error path), emit (one-off event push),
 // onChat (register the message handler).
 
+import { noteTurnAudience } from "./connection-log.js";
 import type { ServerEvent } from "../types.js";
 import { createLogger } from "../logger.js";
 import { startHeartbeat } from "./heartbeat.js";
@@ -10,6 +11,7 @@ import {
   activeChats,
   type ActiveChat,
   appendRun,
+  clients,
   replaceRunLane,
 } from "./state.js";
 import { broadcastActiveChats, broadcastToSession, terminateChat } from "./broadcast.js";
@@ -119,6 +121,7 @@ export function buildManager(): ChatWsManager {
         done: false,
       };
       activeChats.set(sessionId, chat);
+      noteTurnAudience(sessionId, clients);
       broadcastActiveChats();
 
       // Heartbeat: keep the client's per-op activity clock fresh through

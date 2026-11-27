@@ -112,6 +112,7 @@ function retireChatWs(reason) {
   const ws = chatWs;
   if (!ws) return;
   console.warn('[ws] retiring chat socket — ' + reason);
+  try { window.laxWsDiag && window.laxWsDiag.noteDrop('retired: ' + reason); } catch {}
   chatWs = null;
   stopChatWsHeartbeat();
   ws.onopen = null;
@@ -146,6 +147,7 @@ function connectChatWs() {
     // The server may have restarted: the agent origin is a fresh port then.
     if (typeof refreshLaxAgent === 'function') refreshLaxAgent();
     startChatWsHeartbeat();
+    try { window.laxWsDiag && window.laxWsDiag.report(ws); } catch {}
     if (activeChat) ws.send(JSON.stringify({ type: 'subscribe', sessionId: activeChat.id }));
     // The tiled chats beside it are followed too (chat-tiles.js).
     try { if (window.laxChatTiles) window.laxChatTiles.onSocketOpen(); } catch {}
@@ -191,9 +193,10 @@ function connectChatWs() {
     handleChatWsMessage(e);
   };
 
-  ws.onclose = () => {
+  ws.onclose = (ev) => {
     clearTimeout(connectDeadline);
     if (chatWs !== ws) return;
+    try { window.laxWsDiag && window.laxWsDiag.noteDrop('closed code=' + (ev && ev.code)); } catch {}
     console.log('[ws] Chat WebSocket closed, reconnecting in 3s...');
     chatWs = null;
     stopChatWsHeartbeat();

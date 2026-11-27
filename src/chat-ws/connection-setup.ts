@@ -10,6 +10,7 @@ import { browserClients, clients } from "./state.js";
 import { listActiveChatIds } from "./broadcast.js";
 import { sendFrame } from "./frames.js";
 import { reconcileAllPendingProcessRelays } from "../canonical-loop/public/process-relay.js";
+import { noteConnected, noteNoPong } from "./connection-log.js";
 
 const WS_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const HEARTBEAT_INTERVAL_MS = 25_000;
@@ -24,6 +25,7 @@ export function setupConnection(ws: WebSocket, opts: { browser: boolean } = { br
   const subscriptions = new Set<string>();
   clients.set(ws, subscriptions);
   if (opts.browser) browserClients.add(ws);
+  noteConnected(ws, opts.browser);
   setImmediate(() => reconcileAllPendingProcessRelays());
 
   // Auto-close after 24h to force re-authentication.
@@ -49,6 +51,7 @@ export function setupConnection(ws: WebSocket, opts: { browser: boolean } = { br
   ws.on("pong", () => { isAlive = true; });
   const heartbeatTimer = setInterval(() => {
     if (!isAlive) {
+      noteNoPong(ws);
       try { ws.terminate(); } catch { /* already dead */ }
       return;
     }

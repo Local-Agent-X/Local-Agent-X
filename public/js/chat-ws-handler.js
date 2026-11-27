@@ -15,6 +15,7 @@
 function handleChatWsMessage(e) {
   let msg;
   try { msg = JSON.parse(e.data); } catch { return; }
+  try { window.laxWsDiag && window.laxWsDiag.noteFrame(msg); } catch {}
   dispatchChatWsMessage(msg);
 }
 

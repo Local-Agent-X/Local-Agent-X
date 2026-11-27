@@ -137,7 +137,7 @@ function enterIdeView(appId, appName, appUrl, buildPrompt) {
 
   // Subscribe to this IDE session on WS
   if (typeof chatWs !== 'undefined' && chatWs && chatWs.readyState === WebSocket.OPEN) {
-    chatWs.send(JSON.stringify({ type: 'subscribe', sessionId: _ideSessionId }));
+    chatWs.send(window.ChatStreamStore ? ChatStreamStore.subscribeFrame(_ideSessionId) : JSON.stringify({ type: 'subscribe', sessionId: _ideSessionId }));
   }
 
   // If building a new app, send the prompt immediately

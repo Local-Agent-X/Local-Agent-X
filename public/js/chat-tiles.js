@@ -143,7 +143,7 @@ var laxChatTiles = (function () {
 
   function follow(id) {
     try {
-      if (window.chatWs && window.chatWs.readyState === WebSocket.OPEN) window.chatWs.send(JSON.stringify({ type: 'subscribe', sessionId: id }));
+      if (window.chatWs && window.chatWs.readyState === WebSocket.OPEN) window.chatWs.send(ChatStreamStore.subscribeFrame(id));
     } catch (e) { /* the next connect follows every tile (onSocketOpen) */ }
   }
 

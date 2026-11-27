@@ -52,6 +52,18 @@ describe("chat-message-echo", () => {
     expect(chat.messages).toHaveLength(3);
   });
 
+  // 2026-11-27: a reconnect replayed a finished Grok turn, and its echo put the
+  // owner's first message again at the end, under the reply.
+  it("a replayed echo of a turn whose reply is already shown adds nothing", () => {
+    const chat: Chat = { id: "s1", messages: [{ role: "user", content: "build the shop helper" }, { role: "assistant", content: "stuck" }] };
+    const { handleUserMessageEcho } = load([chat], chat, vi.fn());
+    handleUserMessageEcho({ ...echo("s1", "build the shop helper"), _replay: true });
+    expect(chat.messages).toHaveLength(2);
+    // A replay of a message the chat does not have yet still shows it.
+    handleUserMessageEcho({ ...echo("s1", "r u ok"), _replay: true });
+    expect(chat.messages.map((m) => m.content)).toEqual(["build the shop helper", "stuck", "r u ok"]);
+  });
+
   it("ignores a chat this window does not hold, and does not repaint a chat that is not open", () => {
     const open: Chat = { id: "s1", messages: [] };
     const other: Chat = { id: "s2", messages: [] };

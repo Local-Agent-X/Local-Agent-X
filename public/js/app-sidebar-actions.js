@@ -252,7 +252,7 @@ function selectChat(id) {
   try { if (typeof updateStreamUI === 'function') updateStreamUI(); } catch {}
   // Subscribe to this chat's events via WS
   if (window.chatWs && window.chatWs.readyState === WebSocket.OPEN) {
-    window.chatWs.send(JSON.stringify({ type: 'subscribe', sessionId: id }));
+    window.chatWs.send(ChatStreamStore.subscribeFrame(id));
   }
   // Bind the browser panel to this chat so its own agent view is surfaced (and
   // the previous chat's browser stays alive, detached, in the pool).

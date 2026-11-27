@@ -31,6 +31,15 @@ function handleUserMessageEcho(msg) {
       const row = chat.messages[i];
       if (row && row.role === 'user' && _echoComparable(row.content) === text) return true;
     }
+    // A replay can bring back a turn whose reply is already in the chat (a page
+    // reloaded after the turn ended): its message is then the newest user row,
+    // above that reply. Added again, it showed at the end (2026-11-27).
+    if (msg._replay) {
+      for (let i = chat.messages.length - 1; i >= 0; i--) {
+        const row = chat.messages[i];
+        if (row && row.role === 'user') { if (_echoComparable(row.content) === text) return true; break; }
+      }
+    }
     const row = { role: 'user', content: ev.text, timestamp: Date.now() };
     const attachments = userRowAttachments({ images: ev.images });
     if (attachments) row.attachments = attachments;

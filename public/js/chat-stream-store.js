@@ -133,6 +133,25 @@
     return entries.get(sessionId) || null;
   }
 
+  // The newest turn of this chat this page saw through `done` (doneOpIds keeps
+  // finish order), or undefined. Sent with a subscribe so the server does not
+  // replay a finished turn the page already holds (chat-ws/replay.ts): every
+  // reconnect replayed it, and its user_message echo added the user's message
+  // again at the end of the chat (2026-11-27).
+  function lastDoneOpId(sessionId) {
+    const e = get(sessionId);
+    if (!e || e.doneOpIds.size === 0) return undefined;
+    let last;
+    for (const id of e.doneOpIds) last = id;
+    return last;
+  }
+
+  // The subscribe frame for a chat: what this page already holds rides along.
+  function subscribeFrame(sessionId) {
+    const doneOpId = lastDoneOpId(sessionId);
+    return JSON.stringify(doneOpId ? { type: 'subscribe', sessionId, doneOpId } : { type: 'subscribe', sessionId });
+  }
+
   // ── Growth bounds ──
   // A long-lived tab otherwise accumulates one entry per session ever
   // touched and one doneOpId per turn ever finished — both unbounded.
@@ -369,7 +388,7 @@
   window._ChatStreamState = { entries, ensure, notify, rememberDoneOp };
 
   window.ChatStreamStore = {
-    get, ensure,
+    get, ensure, lastDoneOpId, subscribeFrame,
     startTurn, adoptTurn, reanchorTurn, applyEvent, bumpActivity, isSupersededFrame,
     addInject, consumeInject, markInjectSendNow,
     isStreaming, isActive, inflightOps,

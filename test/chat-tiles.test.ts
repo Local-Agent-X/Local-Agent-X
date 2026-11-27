@@ -123,6 +123,7 @@ describe("the tile grid on the chat page", () => {
     isStreaming: (id: string) => entries[id]?.status === "streaming",
     isActive: (id: string) => entries[id]?.status === "streaming",
     subscribeAll: (cb: typeof storeCb) => { storeCb = cb; },
+    subscribeFrame: (id: string) => JSON.stringify({ type: "subscribe", sessionId: id }),
   };
   const tile = (id: string) => document.querySelector<HTMLElement>(`.chat-tile[data-session="${id}"]`)!;
   const main = () => document.getElementById("chat-main")!;

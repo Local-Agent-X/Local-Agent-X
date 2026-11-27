@@ -321,5 +321,11 @@ describe("the reducer stamps each call", () => {
     // The turn's clock starts at the server's time once the op is announced.
     S.applyEvent("s1", { type: "chat_op_started", opId: "op1", startedAt: 5_000 });
     expect((S.get("s1") as unknown as { turnStartedMs: number }).turnStartedMs).toBe(5_000);
+    // A subscribe says which finished turn this page holds, so the server does
+    // not replay it (2026-11-27: the replay re-added the user's message).
+    const frame = (S as unknown as { subscribeFrame: (s: string) => string }).subscribeFrame;
+    expect(JSON.parse(frame("s1"))).toEqual({ type: "subscribe", sessionId: "s1" });
+    S.applyEvent("s1", { type: "done", opId: "op1" });
+    expect(JSON.parse(frame("s1"))).toEqual({ type: "subscribe", sessionId: "s1", doneOpId: "op1" });
   });
 });

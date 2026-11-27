@@ -14,6 +14,8 @@
  * asks the user something.
  */
 
+import { findTextToolCallRanges } from "../adapters/tool-call-text-syntaxes.js";
+
 const ACTION_VERBS =
   "check|run|rerun|look|pinpoint|fix|test|retest|try|retry|investigate|dig|find|debug|inspect|verify|search|read|open|" +
   "trace|capture|pull|grab|reproduce|compare|confirm|install|launch|build|rebuild|scan|diagnose|narrow|figure|work";
@@ -30,10 +32,13 @@ function asksTheUser(text: string): boolean {
   return /\?\s*(?:$|\n|["'”*_)\]]*\s)/.test(text);
 }
 
-/** The words of the promise, for the nudge; null when the reply promises no action of the agent's own. */
+/** The words of the promise, for the nudge; null when the reply promises no action of the agent's own. A reply
+ *  that holds tool-call text ("Let me search. <function_calls>...") is the tool-intent gate's
+ *  (tool-intent-gate.ts): two nudges on one turn would contradict each other. */
 export function namedNextStep(reply: string): string | null {
   const text = reply.trim();
   if (!text || asksTheUser(text)) return null;
+  if (findTextToolCallRanges(text, undefined, { maskCodeSpans: true }).length > 0) return null;
   const hit = ACTION_PROMISE.exec(text);
   if (!hit) return null;
   const sentence = text.slice(hit.index).split(/(?<=[.!])\s/)[0] ?? hit[0];

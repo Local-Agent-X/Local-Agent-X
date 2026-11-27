@@ -101,7 +101,9 @@ describe("buildChunkTask", () => {
     });
     expect(t).toContain("Retry — prior attempt was rejected");
     expect(t).toContain("Done-when claimed");
-    expect(t).toContain("Address ONLY the gap the reviewer named");
+    // The gap and only that gap, fixed as a class (chunk-review/skeptic-bar.ts FIX_THE_CLASS).
+    expect(t).toContain("Address the gap the reviewer named, and only that gap.");
+    expect(t).toContain("every input of the same kind is handled");
   });
 
   it("omits sharpened context block when empty", () => {

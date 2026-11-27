@@ -19,6 +19,8 @@ describe("namedNextStep", () => {
     expect(namedNextStep("Done. Let me know if you see the error again.")).toBeNull();
     expect(namedNextStep("The phone is unplugged. Should I check the logs once you reconnect it?")).toBeNull();
     expect(namedNextStep("")).toBeNull();
+    // A reply carrying tool-call text is the tool-intent gate's to re-drive.
+    expect(namedNextStep('Let me search for that.\n<atem:function_calls><atem:invoke name="grep"><atem:parameter name="pattern">x</atem:parameter></atem:invoke></atem:function_calls>')).toBeNull();
   });
 
   it("the nudge quotes the step and leaves room to say what stops it", () => {

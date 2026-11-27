@@ -148,6 +148,16 @@ export function chunkProcessFailureOutcome(
   };
 }
 
+/** The owner paused or stopped the build while the chunk was being reviewed.
+ *  A judge cut off mid-run has not judged, so the review's verdict does not
+ *  stand: label-check-grok's fix chunk 1015 landed as "All gates passed" after
+ *  a Pause aborted its skeptic (2026-11-27). The chunk halts like any stopped
+ *  one, its work is kept, and it is reviewed again when the build goes on. */
+export function interruptedReviewOutcome(chunkNumber: number): ChunkReviewOutcome {
+  const reasoning = `Chunk ${chunkNumber} was stopped during its review; it is not landed on a review that did not finish, and is reviewed again when the build goes on.`;
+  return { action: "halt", reasoning, findings: [{ gate: "worker-run", action: "halt", reasoning }], report: chunkReportOf(undefined) };
+}
+
 export async function runChunkOnce(opts: RunChunkOnceOptions): Promise<ChunkReviewOutcome> {
   const task = workerTask(opts);
   const role = chunkAgentRole(opts.chunk.klass);
@@ -232,6 +242,11 @@ export async function runChunkOnce(opts: RunChunkOnceOptions): Promise<ChunkRevi
       onProgress: (msg) => opts.emit({ type: "review-result", chunkNumber: opts.chunk.number, totalChunks: opts.totalChunks, message: `[judge] ${msg}` }),
     } : undefined,
   }, opts.judgmentHook, opts.signal);
+  if (opts.signal?.aborted) {
+    const stopped = interruptedReviewOutcome(opts.chunk.number);
+    opts.emit({ type: "review-result", chunkNumber: opts.chunk.number, totalChunks: opts.totalChunks, message: `Review: halt — ${stopped.reasoning}` });
+    return stopped;
+  }
 
   for (const owed of outcome.owed ?? []) {
     opts.emit({ type: "review-result", chunkNumber: opts.chunk.number, totalChunks: opts.totalChunks, message: `Chunk ${opts.chunk.number} unverified: ${owed.why}` });

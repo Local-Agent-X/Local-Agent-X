@@ -13,6 +13,9 @@ import type { LoopOptions, LoopResult } from "../loop/types.js";
 import type { ParsedChunk } from "../plan-parser.js";
 import { recordLanded, recordOwed, recordSetAside } from "../failure-recovery.js";
 import type { FinishProgress } from "./fix-chunk.js";
+import { FIX_THE_CLASS } from "../chunk-review/skeptic-bar.js";
+import { recordBuildTime } from "../failure-recovery.js";
+import { finishDeadline, MIN_FINISH_MS } from "./time-limit.js";
 
 const chunk = (n: number): ParsedChunk => ({ number: n, title: `c${n}`, phase: "Phase A", klass: "leaf", slice: "s", dependsOn: [], scenarios: "—", doneWhen: "d", rawSection: "" });
 const dir = mkdtempSync(join(tmpdir(), "lax-finish-"));
@@ -63,14 +66,17 @@ describe("runFinishGates", () => {
       { suite: { failed: [], unjudged: [] }, found: breakers([], [], [], []) },
     ]);
     const out = await run(h);
-    expect(h.buildFixes).toHaveBeenCalledTimes(1);
-    const fixOpts = h.buildFixes.mock.calls[0][0];
-    expect(fixOpts.plan.chunks.map((c) => [c.number, c.title, c.scenarios])).toEqual([
+    // One fix chunk at a time, so the finish checks' time limit is checked between them.
+    expect(h.buildFixes).toHaveBeenCalledTimes(2);
+    const fixed = h.buildFixes.mock.calls.flatMap((c) => c[0].plan.chunks);
+    expect(fixed.map((c) => [c.number, c.title, c.scenarios])).toEqual([
       [1011, "Finish fix 1: failing scenarios", "05"],
       [1012, "Finish fix 1: hostile findings", "—"],
     ]);
-    expect(fixOpts).toMatchObject({ skipWallProbe: true, finishGates: false, maxConcurrentChunks: 1, startingChunk: 1011 });
-    expect(fixOpts.plan.chunks[1].slice).toContain("[critical] tab leak");
+    expect(h.buildFixes.mock.calls[0][0]).toMatchObject({ skipWallProbe: true, finishGates: false, maxConcurrentChunks: 1, startingChunk: 1011 });
+    expect(fixed[1].slice).toContain("[critical] tab leak");
+    // The fixer is told to fix the class, which is what its reviewer checks.
+    expect(fixed[1].slice).toContain(FIX_THE_CLASS);
     expect(out.chunksCommitted).toBe(4);
     expect(out.openItems).toEqual(["unlucky [low]: label clips", "the owner's walkthrough of the finished app is still to do"]);
   });
@@ -189,7 +195,7 @@ describe("runFinishGates — where a stopped build left them", () => {
     expect(h.buildFixes.mock.calls[0][0].plan.chunks.map((c) => c.number)).toEqual([1013]);
     // Round 1 was not judged again: the one judging is round 2's.
     expect(h.runBreakers).toHaveBeenCalledTimes(1);
-    expect(h.said[0]).toBe("finish checks, round 1: going on with its fix chunks (2 of 3 done before the build stopped)");
+    expect(h.said).toContain("finish checks, round 1: going on with its fix chunks (2 of 3 done before the build stopped)");
     expect(progress[0]).toMatchObject({ round: 1, done: [1011, 1012] });
     expect(out.openItems).toContain("unlucky [low]: label clips");
   });
@@ -230,5 +236,33 @@ describe("runFinishGates — where a stopped build left them", () => {
     h.buildFixes.mockImplementationOnce(async () => ({ ...done(), chunksCommitted: 1, outcomes: [{ chunkNumber: 1011, action: "proceed", outcome: {} as never }] }));
     await run(h, opts({ projectDir: project, planPath: join(project, "spec", "plan.md") }));
     expect(h.buildFixes.mock.calls.map((c) => c[0].plan.chunks.map((x) => x.number))).toEqual([[1011], [101101]]);
+  });
+});
+
+// The owner's ruling, 2026-11-27: the finish checks take no longer than
+// building the app did. A Grok build spent hours on one fix chunk; a GPT
+// build about six hours over five rounds.
+describe("the finish checks' time limit", () => {
+  it("is as long as the build's own building time, at least an hour, and a saved limit is kept", () => {
+    const fresh = mkdtempSync(join(tmpdir(), "lax-finish-time-"));
+    const now = Date.UTC(2026, 10, 27, 2, 0);
+    expect(Date.parse(finishDeadline(fresh, undefined, now)) - now).toBe(MIN_FINISH_MS);
+    recordBuildTime(fresh, 2 * 60 * 60_000);
+    recordBuildTime(fresh, 30 * 60_000);
+    expect(Date.parse(finishDeadline(fresh, undefined, now)) - now).toBe(150 * 60_000);
+    expect(finishDeadline(fresh, "2026-11-27T03:00:00.000Z", now)).toBe("2026-11-27T03:00:00.000Z");
+  });
+
+  it("once it is up, no fix chunk is started, and what they would have fixed goes on the owner's list", async () => {
+    const h = harness([{ suite: { failed: [], unjudged: [] }, found: [] }]);
+    const fix = (n: number): ParsedChunk => ({ ...chunk(n), title: `Finish fix 1: f${n}`, phase: "Finish", klass: "trunk", slice: `fix ${n}` });
+    const timedOut: FinishProgress = {
+      round: 1, fixRounds: 2, runBase: 0, fixes: [fix(1011), fix(1012)], done: [1011], open: [], deadline: "2000-01-01T00:00:00.000Z",
+    };
+    const out = await run(h, opts({ finishProgress: timedOut }));
+    expect(h.buildFixes).not.toHaveBeenCalled();
+    expect(h.runBreakers).not.toHaveBeenCalled();
+    expect(out.openItems?.some((i) => i.includes("not started (the finish checks' time was up)"))).toBe(true);
+    expect(h.said.some((m) => m.includes("their time is up"))).toBe(true);
   });
 });

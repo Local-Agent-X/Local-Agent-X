@@ -31,7 +31,7 @@ vi.mock("../advisor/lead-decisions.js", () => ({
   askLead: vi.fn(async (_ref: unknown, s: { final?: boolean }) => { lead.asked++; if (s.final) lead.finals++; return lead.answers.shift() ?? null; }),
 }));
 
-const { handlePushBack, MAX_FIX_ROUNDS } = await import("./handle-push-back.js");
+const { handlePushBack, MAX_FIX_ROUNDS, MAX_FINISH_FIX_ROUNDS } = await import("./handle-push-back.js");
 const { MAX_LEAD_ROUNDS } = await import("./lead-rounds.js");
 const { chunkReportOf } = await import("../chunk-review/chunk-report.js");
 
@@ -280,5 +280,28 @@ describe("handlePushBack on a build failure that keeps coming back", () => {
     const result = await led(buildFailed("list.test.ts FAIL: 5 of 9 failed"));
     expect(result.finalAction).toBe("proceed");
     expect(rebuilds.reasons).toHaveLength(4);
+  });
+});
+
+// The owner's ruling, 2026-11-27: a finish fix takes at most three rounds,
+// with a lead or without. With a lead's eight, one Grok finish fix took hours.
+describe("a finish fix's rounds", () => {
+  const finishFix = { number: 1011, title: "Finish fix 1: hostile findings", phase: "Finish", dependsOn: [] } as unknown as ParsedChunk;
+  const finishPlan = { chunks: [finishFix] } as unknown as ParsedPlan;
+
+  it("stop at three even when the lead keeps saying continue", async () => {
+    rebuilds.outcomes = Array.from({ length: 10 }, (_, i) => pushedBack(`new finding ${i}`));
+    lead.answers = Array.from({ length: 10 }, () => ({ action: "continue", reasoning: "progress", instruction: "close it" }));
+    const result = await handlePushBack({
+      chunk: finishFix, totalChunks: 5, planPath: "spec/plan.md", plan: finishPlan, projectDir: "C:/proj", preSha: "abc",
+      outcome: pushedBack("first finding"), emit: (e) => { events.push(e); },
+      buildLead: { projectDir: "C:/proj", originSessionId: "chat-x" },
+    });
+    expect(rebuilds.reasons).toHaveLength(MAX_FINISH_FIX_ROUNDS);
+    expect(result.finalAction).not.toBe("proceed");
+  });
+
+  it("a plan chunk with a lead still gets the lead's rounds", () => {
+    expect(MAX_FINISH_FIX_ROUNDS).toBeLessThan(MAX_LEAD_ROUNDS);
   });
 });

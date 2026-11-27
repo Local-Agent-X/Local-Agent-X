@@ -1,8 +1,9 @@
 // A chunk an earlier run set aside picks up its kept work and findings: each
 // resume used to rebuild it from nothing, losing the last run's fixes
 // (label-check's chunk 3: four runs, six branches, 2026-11-22). Real git repos.
+import { FIX_THE_CLASS } from "../chunk-review/skeptic-bar.js";
 import { afterAll, describe, expect, it } from "vitest";
-import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { git } from "../../agency/worktree-core.js";
@@ -71,7 +72,7 @@ describe("carry-over of a set-aside chunk", () => {
     const brief = carryOverBrief(carry, true);
     expect(brief).toContain("already merged into your tree");
     expect(brief).toContain("`4 : 1`");
-    expect(brief).toContain("fix the class of input");
+    expect(brief).toContain(FIX_THE_CLASS);
   });
 
   // This used to abort the merge and build the chunk from nothing ("you start
@@ -167,5 +168,51 @@ describe("landedUnrecorded", () => {
     land(dir, "autobuild/c2", "chunk 2: List");
     expect(landedUnrecorded(dir, [2, 3, 5], longAgo)).toEqual([2]);
     expect(landedUnrecorded(dir, [2], new Date(Date.now() + 60_000).toISOString())).toEqual([]);
+  });
+});
+
+// Finish fix 1011, label-check-grok, 2026-11-27: on resume its kept branch
+// would not merge, because files that branch adds sat untracked in the tree
+// (its own earlier attempt's), and the fix was rebuilt from nothing.
+describe("carry-over over files the chunk's earlier attempt left untracked", () => {
+  function withAddedFiles(): string {
+    const dir = project();
+    git(["checkout", "-q", "autobuild/c3-6"], dir);
+    mkdirSync(join(dir, "src", "meds"), { recursive: true });
+    writeFileSync(join(dir, "src", "meds", "realm-add.ts"), "export const add = 2;\n");
+    writeFileSync(join(dir, "src", "meds", "probe.ts"), "export const probe = 'kept';\n");
+    git(["add", "."], dir);
+    git([...HARNESS_COMMIT_IDENTITY, "commit", "-q", "-m", "chunk 3: added files"], dir);
+    git(["checkout", "-q", "main"], dir);
+    return dir;
+  }
+
+  it("takes the kept work: identical leftovers are dropped, a differing one is saved inside .git, and nothing is rebuilt", () => {
+    const dir = withAddedFiles();
+    const wt = freshWorktree(dir, "c3-10");
+    mkdirSync(join(wt, "src", "meds"), { recursive: true });
+    writeFileSync(join(wt, "src", "meds", "realm-add.ts"), "export const add = 2;\n");
+    writeFileSync(join(wt, "src", "meds", "probe.ts"), "export const probe = 'half-written';\n");
+
+    const merge = mergeCarriedWork(wt, "autobuild/c3-6");
+    expect(merge.merged).toBe(true);
+    expect(merge.displaced?.sort()).toEqual(["src/meds/probe.ts", "src/meds/realm-add.ts"]);
+    expect(readFileSync(join(wt, "src", "meds", "probe.ts"), "utf8").trimEnd()).toBe("export const probe = 'kept';");
+    expect(readFileSync(join(wt, "match.ts"), "utf8")).toContain("ratio spacing fix");
+    expect(git(["status", "--porcelain"], wt)).toBe("");
+
+    const gitDir = git(["rev-parse", "--absolute-git-dir"], wt);
+    const saved = readdirSync(join(gitDir, "lax-displaced"));
+    expect(saved).toHaveLength(1);
+    expect(readFileSync(join(gitDir, "lax-displaced", saved[0], "src", "meds", "probe.ts"), "utf8")).toContain("half-written");
+    expect(existsSync(join(gitDir, "lax-displaced", saved[0], "src", "meds", "realm-add.ts"))).toBe(false);
+  });
+
+  it("an untracked file the branch does not have is left as it was", () => {
+    const dir = withAddedFiles();
+    const wt = freshWorktree(dir, "c3-11");
+    writeFileSync(join(wt, "notes.txt"), "mine");
+    expect(mergeCarriedWork(wt, "autobuild/c3-6").merged).toBe(true);
+    expect(readFileSync(join(wt, "notes.txt"), "utf8")).toBe("mine");
   });
 });

@@ -1,4 +1,5 @@
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
+import { FIX_THE_CLASS } from "../chunk-review/skeptic-bar.js";
 import type { ParsedPlan, ParsedChunk } from "../plan-parser.js";
 import { buildChunkTask, chunkAgentRole, distillSharpenedContext } from "../skill-mapper.js";
 import { runChunkAgent } from "../agents/chunk-runner.js";
@@ -84,7 +85,7 @@ function workerTask(opts: RunChunkOnceOptions): string {
   }
   if (opts.continueFrom) {
     return `The review sent your chunk back. ${opts.retryReason ?? ""}\n\n` +
-      "Fix that in the same project, keep what you already fixed, run the checks the done-when names, and end " +
+      `Fix that in the same project. ${FIX_THE_CLASS} Keep what you already fixed, run the checks the done-when names, and end ` +
       "by calling chunk_report again: your earlier report is replaced by this one.";
   }
   const sharpenedContext = opts.priorOutcomes && opts.priorOutcomes.length > 0

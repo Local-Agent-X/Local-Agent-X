@@ -22,6 +22,7 @@
  *   - Retries a halted chunk a second time.
  */
 
+import { recordBuildTime } from "../failure-recovery.js";
 import { getRuntimeConfig } from "../../config.js";
 import { ensureGitBaseline, getHeadSha } from "../git-helpers.js";
 import { runPreflightProbe } from "./preflight.js";
@@ -123,6 +124,7 @@ export async function runBuildLoop(opts: LoopOptions): Promise<LoopResult> {
   // opts.projectDir (each gets its own isolated worktree). The shared git
   // baseline + preflight probe above have already run for both paths.
   const maxConcurrentChunks = resolveMaxConcurrentChunks(opts.maxConcurrentChunks);
+  const planStartedAt = Date.now();
   const ran = maxConcurrentChunks > 1
     ? await runParallelWaves({
       opts,
@@ -138,6 +140,8 @@ export async function runBuildLoop(opts: LoopOptions): Promise<LoopResult> {
   const { result, plan } = endIdx === totalChunks
     ? await buildSplitOffs(opts, ran, (o, from) => runChunksInOrder({ opts: o, startIdx: from, endIdx: o.plan.chunks.length, emit, events, outcomes }))
     : { result: ran, plan: opts.plan };
+  // Building time sets how long the finish checks may take (finish-gates/time-limit.ts).
+  recordBuildTime(opts.projectDir, Date.now() - planStartedAt);
 
   // A run that lands the plan's last chunk goes on to the finish gates; their
   // fix chunks are built here, serially, like any chunk of the plan.

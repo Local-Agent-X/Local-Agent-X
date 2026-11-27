@@ -11,6 +11,9 @@
  * kept work no longer merges with base, the merge is undone and the chunk
  * builds fresh, still with the findings.
  */
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { dirname, isAbsolute, join } from "node:path";
+import { FIX_THE_CLASS } from "../chunk-review/skeptic-bar.js";
 import { git, gitWritingCommit } from "../../agency/worktree-core.js";
 import { conflictedFiles } from "../../agency/worktree-merge-conflicts.js";
 import { setAsideRecordFor } from "../failure-recovery.js";
@@ -50,11 +53,23 @@ function branchExists(branch: string, cwd: string): boolean {
  * went that way in a day (label-check-grok, 2026-11-26). A merge that failed
  * for any other reason is aborted and the tree is left as cut.
  */
-export function mergeCarriedWork(worktreePath: string, branch: string): { merged: boolean; detail: string; conflicted?: string[] } {
+export function mergeCarriedWork(worktreePath: string, branch: string): { merged: boolean; detail: string; conflicted?: string[]; displaced?: string[] } {
   const merge = ["merge", "--no-edit", "--no-ff", branch];
+  let displaced: string[] = [];
   try {
-    gitWritingCommit(merge, worktreePath);
-    return { merged: true, detail: `merged '${branch}'` };
+    try {
+      gitWritingCommit(merge, worktreePath);
+    } catch (e) {
+      // Files the branch adds that sit untracked in the tree: what the chunk's
+      // own earlier attempt left there when it was cut off. git refuses the
+      // merge over them, and the chunk was rebuilt from nothing (finish fix
+      // 1011, label-check-grok, 2026-11-27). The branch's copy is the kept
+      // work; a tree copy that differs is saved inside .git, never lost.
+      displaced = displaceUntrackedFor(worktreePath, branch, (e as Error).message);
+      if (displaced.length === 0) throw e;
+      gitWritingCommit(merge, worktreePath);
+    }
+    return { merged: true, detail: `merged '${branch}'`, ...(displaced.length ? { displaced } : {}) };
   } catch (e) {
     let conflicted: string[] = [];
     try { conflicted = conflictedFiles(worktreePath); } catch { /* no merge in progress */ }
@@ -62,6 +77,35 @@ export function mergeCarriedWork(worktreePath: string, branch: string): { merged
     try { git(["merge", "--abort"], worktreePath); } catch { /* nothing in progress: the merge never started */ }
     return { merged: false, detail: (e as Error).message.replace(/\s+/g, " ").slice(0, 300) };
   }
+}
+
+/**
+ * Move out of the way the untracked files git named as blocking a merge of
+ * `branch`, so the merge can take the branch's copies. A file identical to the
+ * branch's is deleted; one that differs is saved under .git/lax-displaced/.
+ * Returns the paths moved; none when the error was not that refusal.
+ */
+function displaceUntrackedFor(tree: string, branch: string, error: string): string[] {
+  const listed = error.match(/untracked working tree files would be overwritten by merge:\s*([\s\S]*?)\s*Please move or remove/);
+  if (!listed) return [];
+  const paths = listed[1].split(/\s+/).filter(Boolean);
+  const gitDir = git(["rev-parse", "--git-dir"], tree);
+  const saveRoot = join(isAbsolute(gitDir) ? gitDir : join(tree, gitDir), "lax-displaced", String(Date.now()));
+  const moved: string[] = [];
+  for (const rel of paths) {
+    const file = join(tree, rel);
+    if (!existsSync(file)) continue;
+    let theirs: string | null = null;
+    try { theirs = git(["show", `${branch}:${rel}`], tree); } catch { /* not in the branch: keep it as found */ }
+    if (theirs === null) continue;
+    if (readFileSync(file, "utf8").replace(/\r\n/g, "\n").trimEnd() !== theirs.replace(/\r\n/g, "\n").trimEnd()) {
+      mkdirSync(dirname(join(saveRoot, rel)), { recursive: true });
+      copyFileSync(file, join(saveRoot, rel));
+    }
+    rmSync(file, { force: true });
+    moved.push(rel);
+  }
+  return moved;
 }
 
 /**
@@ -115,7 +159,7 @@ export function carryOverBrief(carry: CarryOver, merged: boolean, conflicted: re
         : `${before} Its work on branch '${carry.branch}' no longer merges with the current base, so you start fresh: read it (git show ${carry.branch}) and reuse what still applies.`
     : before;
   const found = carry.findings.length
-    ? `\n\nWhat the reviews found in earlier runs. Fix each, and fix the class of input each one belongs to, not only the example given: the reviewer will try its siblings. Keep every one of them fixed:\n` +
+    ? `\n\nWhat the reviews found in earlier runs. Fix each. ${FIX_THE_CLASS} Keep every one of them fixed:\n` +
       carry.findings.map((f) => `- ${f.replace(/\s+/g, " ").trim()}`).join("\n")
     : "";
   return work + found;

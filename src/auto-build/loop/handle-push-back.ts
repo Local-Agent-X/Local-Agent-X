@@ -40,11 +40,20 @@ import { parsePlanFile } from "../plan-parser.js";
 import type { ChunkJudge } from "../chunk-review/chunk-verdict.js";
 import type { BuildLeadRef } from "../advisor/lead-chat.js";
 import { MAX_LEAD_ROUNDS, planLeadRound, type LeadRoundPlan } from "./lead-rounds.js";
-import { landsWhatItFixed } from "../finish-gates/fix-chunk.js";
+import { isFinishFixChunk, landsWhatItFixed } from "../finish-gates/fix-chunk.js";
 import { renderChunkReport } from "../chunk-review/chunk-report.js";
 
 /** Rebuilds a pushed-back chunk gets after its first attempt. */
 export const MAX_FIX_ROUNDS = 3;
+/**
+ * Rounds a finish fix takes, with a lead or without: it fixes what the
+ * break-it agents found in a finished app, and what it does not close goes on
+ * the owner's list. With a lead's eight it was hours on one fix chunk
+ * (label-check-grok, 2026-11-26); the owner ruled three.
+ */
+export const MAX_FINISH_FIX_ROUNDS = 3;
+const roundCeiling = (chunk: ParsedChunk, byLead: boolean): number =>
+  isFinishFixChunk(chunk) ? MAX_FINISH_FIX_ROUNDS : byLead ? MAX_LEAD_ROUNDS : MAX_FIX_ROUNDS;
 
 export interface HandlePushBackOptions {
   chunk: ParsedChunk;
@@ -228,7 +237,7 @@ export async function handlePushBack(opts: HandlePushBackOptions): Promise<Handl
   let buildRepeats = 0;
   let transcript = opts.lastTranscript;
 
-  for (let n = Math.min(opts.firstRound ?? 1, opts.buildLead ? MAX_LEAD_ROUNDS : MAX_FIX_ROUNDS); ; n++) {
+  for (let n = Math.min(opts.firstRound ?? 1, roundCeiling(opts.chunk, !!opts.buildLead)); ; n++) {
     opts.onRound?.(n, [...earlier, round.outcome.reasoning]);
     const { plan: next, byLead } = await nextRound(opts, round, n, earlier, repeated);
     if (next.kind === "halt") {
@@ -267,7 +276,7 @@ export async function handlePushBack(opts: HandlePushBackOptions): Promise<Handl
       return { finalOutcome: rebuilt, finalAction: "halt" };
     }
     // A lead decides what a repeated finding means; the rules stop on it.
-    const ceiling = byLead ? MAX_LEAD_ROUNDS : MAX_FIX_ROUNDS;
+    const ceiling = roundCeiling(next.chunk, byLead);
     if (byLead && n >= ceiling) {
       const last = await finalLeadSay(opts, { chunk: next.chunk, plan: next.plan, outcome: rebuilt }, n, [...earlier, round.outcome.reasoning], stuck);
       if (last) return last;

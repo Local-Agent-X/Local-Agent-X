@@ -18,6 +18,8 @@
  * left: one more round (up to LEAD_FIX_ROUNDS in all), or end with them listed.
  */
 
+import { finishDeadline, MIN_FINISH_MS, spanOf, timeIsUp } from "./time-limit.js";
+import { FIX_THE_CLASS } from "../chunk-review/skeptic-bar.js";
 import { basename, join } from "node:path";
 import { existsSync } from "node:fs";
 import { listScenarios } from "../../holdout/store.js";
@@ -124,8 +126,8 @@ export function fixChunksFor(round: number, suite: SuiteJudging, breakers: Break
     const found = b.findings.filter(fixedIn(round));
     if (found.length === 0) continue;
     next(`${b.persona} findings`,
-      `A break-it agent (${b.persona}) found these in the finished app:\n${found.map((f) => `- [${f.severity}] ${f.text}`).join("\n")}`,
-      "—", "Each finding above no longer reproduces, shown by a test that fails on the code before this chunk.");
+      `A break-it agent (${b.persona}) found these in the finished app:\n${found.map((f) => `- [${f.severity}] ${f.text}`).join("\n")}\n\n${FIX_THE_CLASS}`,
+      "—", "Each finding above, and inputs of the same kind, no longer reproduce, shown by tests that fail on the code before this chunk.");
   }
   return chunks.slice(0, MAX_FIX_CHUNKS);
 }
@@ -225,16 +227,23 @@ function splitPartsToBuild(planPath: string, progress: FinishProgress, landed: S
   }
 }
 
-/** Build the round's fix chunks not yet done, then any parts split off them. */
-async function buildRound(input: FinishInput, progress: FinishProgress): Promise<{ committed: number; halted: string[] }> {
+/** Build the round's fix chunks not yet done, then any parts split off them,
+ *  one at a time, starting none once the finish checks' time is up. */
+async function buildRound(input: FinishInput, progress: FinishProgress): Promise<{ committed: number; halted: string[]; notStarted: ParsedChunk[] }> {
   const { opts } = input;
   let committed = 0;
   const halted: string[] = [];
   const landed = new Set<number>();
+  const notStarted: ParsedChunk[] = [];
   let batch = progress.fixes.filter((c) => !progress.done.includes(c.number));
   while (batch.length > 0 && !opts.signal?.aborted) {
+    const [one, ...rest] = batch;
+    if (progress.deadline && timeIsUp(progress.deadline)) {
+      notStarted.push(...batch);
+      break;
+    }
     const fixRun = await input.buildFixes({
-      ...opts, plan: { ...opts.plan, chunks: batch, phaseGatesRawSection: "" }, startingChunk: batch[0].number,
+      ...opts, plan: { ...opts.plan, chunks: [one], phaseGatesRawSection: "" }, startingChunk: one.number,
       maxChunks: undefined, landedChunks: [], maxConcurrentChunks: 1, skipWallProbe: true, finishGates: false,
       onChunkSettled: (n) => {
         if (!progress.done.includes(n)) progress.done.push(n);
@@ -245,13 +254,14 @@ async function buildRound(input: FinishInput, progress: FinishProgress): Promise
     committed += fixRun.chunksCommitted;
     for (const o of fixRun.outcomes) if (o.action === "proceed") landed.add(o.chunkNumber);
     if (fixRun.status === "halted") halted.push(fixRun.haltReason.slice(0, 400));
-    batch = splitPartsToBuild(opts.planPath, progress, landed);
-    if (batch.length > 0) {
-      progress.fixes.push(...batch);
+    const split = rest.length === 0 ? splitPartsToBuild(opts.planPath, progress, landed) : [];
+    if (split.length > 0) {
+      progress.fixes.push(...split);
       opts.onFinishProgress?.({ ...progress, fixes: [...progress.fixes], done: [...progress.done], open: [...progress.open] });
     }
+    batch = rest.length > 0 ? rest : split;
   }
-  return { committed, halted };
+  return { committed, halted, notStarted };
 }
 
 export async function runFinishGates(input: FinishInput): Promise<LoopResult> {
@@ -266,23 +276,35 @@ export async function runFinishGates(input: FinishInput): Promise<LoopResult> {
   let prev: RoundFinding | null = null;
   const open: string[] = [...(saved?.open ?? [])];
   let fixRounds = saved?.fixRounds ?? MAX_FIX_ROUNDS;
+  const deadline = finishDeadline(opts.projectDir, saved?.deadline);
+  say(`finish checks: they may take until ${deadline} (as long as building the app took, at least ${spanOf(MIN_FINISH_MS)})`);
   for (let round = saved?.round ?? 1; round <= fixRounds + 1; round++) {
     if (opts.signal?.aborted) break;
+    if (timeIsUp(deadline) && !(saved && round === saved.round)) {
+      say(`finish checks: stopping, their time is up`);
+      open.push("the finish checks stopped when their time was up: the app was not checked again after the last fixes");
+      break;
+    }
     let progress: FinishProgress;
     if (saved && round === saved.round) {
-      progress = { ...saved, fixes: [...saved.fixes], done: [...saved.done], open };
+      progress = { ...saved, fixes: [...saved.fixes], done: [...saved.done], open, deadline };
       say(`finish checks, round ${round}: going on with its fix chunks (${saved.done.length} of ${saved.fixes.length} done before the build stopped)`);
     } else {
       const found = await judgeRound(input, { round, fixRounds, runBase, prev, open });
       if (found.kind === "stop") break;
       prev = found;
       fixRounds = found.fixRounds;
-      progress = { round, fixRounds, runBase, fixes: found.fixes, done: [], open };
+      progress = { round, fixRounds, runBase, fixes: found.fixes, done: [], open, deadline };
     }
     opts.onFinishProgress?.({ ...progress, fixes: [...progress.fixes], done: [...progress.done], open: [...open] });
     const built = await buildRound(input, progress);
     chunksCommitted += built.committed;
     for (const reason of built.halted) open.push(`finish fix round ${round} did not fully land: ${reason}`);
+    if (built.notStarted.length > 0) {
+      say(`finish checks: stopping, their time is up; ${built.notStarted.length} fix chunk(s) not started`);
+      for (const c of built.notStarted) open.push(`${c.title}, not started (the finish checks' time was up): ${c.slice.replace(/\s+/g, " ").slice(0, 600)}`);
+      break;
+    }
   }
   open.push(...owedItems(opts.projectDir), ...ownerItems(opts.projectDir));
   say(`finish checks done: ${open.length} open item(s)`);

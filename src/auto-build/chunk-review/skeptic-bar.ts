@@ -53,6 +53,20 @@ export const FINISH_FIX_BREAK_GROUNDS: readonly string[] = [
   "a crash, lost or corrupted data, or a security hole",
 ];
 
+/**
+ * What every worker sent to fix a finding is told, the fixer's half of the
+ * reviewer's "or with an input of the same kind" above. The reviewer was
+ * told to try a finding's siblings and the fixer was never told to fix them:
+ * a Grok finish fix spent six rounds on one finding, each round patching the
+ * example and the reviewer breaking it with the next character or the next
+ * spelling of the same drug (label-check-grok, 2026-11-26). The owner asked
+ * why the agents were not fixing the class.
+ */
+export const FIX_THE_CLASS =
+  "Fix the cause, so that every input of the same kind is handled, not only the example the review gave: the reviewer " +
+  "will try its siblings (other characters, spellings, sizes, orders, timings of the same kind). Add a test that covers " +
+  "those siblings, not only the reported case.";
+
 export const FINISH_FIX_BAR_BLOCK =
   `## This is a finish fix\n\n` +
   `The break-it agents attacked the finished app and this chunk fixes what they found. Check the fix, not the ` +

@@ -93,6 +93,8 @@ export interface BuildState {
   /** Keyed by phase name. */
   owedPhaseGates?: Record<string, OwedPhaseGate>;
   owed?: OwedCheck[];
+  /** Time spent building the plan's chunks, summed over every run (finish-gates/time-limit.ts). */
+  buildMs?: number;
 }
 
 const MAX_CARRIED_FINDINGS = 8;
@@ -112,7 +114,11 @@ export function readBuildState(projectDir: string): BuildState {
     const setAside = raw.setAside && typeof raw.setAside === "object" ? raw.setAside : undefined;
     const owedPhaseGates = raw.owedPhaseGates && typeof raw.owedPhaseGates === "object" ? raw.owedPhaseGates : undefined;
     const owed = Array.isArray(raw.owed) ? raw.owed : undefined;
-    return { haltHistory: history.slice(-MAX_HISTORY), ...(setAside ? { setAside } : {}), ...(owedPhaseGates ? { owedPhaseGates } : {}), ...(owed ? { owed } : {}) };
+    const buildMs = typeof raw.buildMs === "number" && raw.buildMs > 0 ? raw.buildMs : undefined;
+    return {
+      haltHistory: history.slice(-MAX_HISTORY), ...(setAside ? { setAside } : {}), ...(owedPhaseGates ? { owedPhaseGates } : {}),
+      ...(owed ? { owed } : {}), ...(buildMs ? { buildMs } : {}),
+    };
   } catch {
     return { haltHistory: [] };
   }
@@ -170,6 +176,19 @@ export function recordOwed(projectDir: string, owed: OwedCheck): void {
   const same = (o: OwedCheck) => o.chunk === owed.chunk && o.check === owed.check;
   state.owed = [...(state.owed ?? []).filter((o) => !same(o)), { ...owed, why: owed.why.slice(0, CARRIED_FINDING_CHARS) }];
   writeBuildState(projectDir, state);
+}
+
+/** Add one run's time building the plan's chunks. */
+export function recordBuildTime(projectDir: string, ms: number): void {
+  if (!(ms > 0)) return;
+  const state = readBuildState(projectDir);
+  state.buildMs = (state.buildMs ?? 0) + ms;
+  writeBuildState(projectDir, state);
+}
+
+/** The time this build has spent building its plan's chunks, over every run. */
+export function buildTimeMs(projectDir: string): number {
+  return readBuildState(projectDir).buildMs ?? 0;
 }
 
 /** Every check owed to the owner on what has landed, oldest first. */

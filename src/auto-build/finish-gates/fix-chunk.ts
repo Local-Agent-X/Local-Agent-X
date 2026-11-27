@@ -69,6 +69,8 @@ export interface FinishProgress {
   /** Fix chunks that landed or were set aside this round. */
   done: number[];
   open: string[];
+  /** When the finish checks stop starting new work (time-limit.ts). */
+  deadline?: string;
 }
 
 /**

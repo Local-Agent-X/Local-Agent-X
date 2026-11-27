@@ -15,6 +15,7 @@
  * that varies per-invocation.
  */
 
+import { FIX_THE_CLASS } from "./chunk-review/skeptic-bar.js";
 import type { ParsedChunk } from "./plan-parser.js";
 import type { ChunkAgentRole } from "./agents/chunk-runner.js";
 import type { ChunkReport } from "./chunk-review/chunk-report.js";
@@ -118,7 +119,7 @@ export function buildChunkTask(opts: BuildChunkTaskOptions): string {
     ? `\n## Retry — prior attempt was rejected\n\n` +
       `The previous worker on this chunk reported done but the review pass rejected it:\n\n` +
       `> ${retryReason.trim().replace(/\n/g, "\n> ")}\n\n` +
-      `Address ONLY the gap the reviewer named. Do not refactor unrelated code.\n`
+      `Address the gap the reviewer named, and only that gap. ${FIX_THE_CLASS} Do not refactor unrelated code.\n`
     : "";
 
   return (

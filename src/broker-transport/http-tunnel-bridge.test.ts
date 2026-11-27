@@ -273,3 +273,33 @@ describe("HttpTunnelBridge carries a page's safety headers to the phone", () => 
     });
   });
 });
+
+// A video plays on the phone in pieces (server/byte-range.ts, 2026-11-26): the
+// player's Range goes to the desktop, and the piece comes back as a 206 that
+// says where it sits in the file.
+describe("HttpTunnelBridge carries a piece of a file", () => {
+  it("forwards the player's Range and returns the 206 with its Content-Range", async () => {
+    const piece = new Uint8Array([1, 2, 3, 4]);
+    const upstream = new Headers({ "content-type": "video/mp4", "content-range": "bytes 0-3/9000000", "accept-ranges": "bytes" });
+    const fetchImpl = vi.fn(async () => ({
+      status: 206,
+      arrayBuffer: async () => piece.buffer.slice(0),
+      text: async () => { throw new Error("binary body must not be read as text"); },
+      headers: upstream,
+    }) as unknown as Response);
+    const bridge = new HttpTunnelBridge({
+      loopback: () => ({ origin: "http://127.0.0.1:7007", token: "op-tok" }),
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    const t = new FakeTransport();
+    bridge.attach(t);
+
+    t.emit({ t: "req", id: "v1", method: "GET", path: "/videos/clip.mp4", headers: { range: "bytes=0-" } });
+    await flush();
+
+    expect(fetchImpl).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ headers: expect.objectContaining({ range: "bytes=0-" }) }));
+    const res = JSON.parse(t.sent[t.sent.length - 1]!) as { status: number; enc: string; headers: Record<string, string> };
+    expect(res).toMatchObject({ status: 206, enc: "base64" });
+    expect(res.headers).toEqual({ "content-type": "video/mp4", "content-range": "bytes 0-3/9000000", "accept-ranges": "bytes" });
+  });
+});

@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 74 top-level dirs · 74 live · 0 with no live importer · 2204 non-test source files · 59 oversized · 277 nearing the size cap.
+**Totals:** 74 top-level dirs · 74 live · 0 with no live importer · 2205 non-test source files · 59 oversized · 277 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -47,7 +47,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/classifiers/` | 26 | 18 | L |  |
 | `src/desktop-contract/` | 24 | 11 | M |  |
 | `src/sandbox/` | 24 | 17 | L |  |
-| `src/server/` *(entrypoint)* | 23 | 81 | XL | 3 |
+| `src/server/` *(entrypoint)* | 23 | 82 | XL | 3 |
 | `src/protocols/` | 22 | 51 | XL |  |
 | `src/voice/` | 20 | 80 | XL | 1 |
 | `src/autonomy/` | 19 | 6 | M |  |

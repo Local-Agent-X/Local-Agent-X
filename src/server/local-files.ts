@@ -15,7 +15,8 @@
  * The resolver that names these in a reply (workspace/named-files.ts) and the
  * phone's path allowlist (broker-transport/device-paths.ts) read the same rule.
  */
-import { readFileSync, realpathSync, statSync } from "node:fs";
+import { realpathSync, statSync } from "node:fs";
+import { sendFileOrRange } from "./byte-range.js";
 import { basename, isAbsolute } from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { jsonResponse } from "../server-utils.js";
@@ -77,6 +78,6 @@ export function serveLocalFile(url: URL, req: IncomingMessage, res: ServerRespon
   const served = LOCAL_FILE_TYPES[extOf(absPath)];
   const headers: Record<string, string> = { "Content-Type": served.type, "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer", "Cache-Control": "no-cache" };
   if (!served.inline) headers["Content-Disposition"] = `attachment; filename="${basename(absPath).replace(/["\\\r\n]/g, "_")}"`;
-  res.writeHead(200, headers);
-  res.end(readFileSync(realpathSync.native(absPath)));
+  // A video plays in pieces as it arrives (byte-range.ts).
+  sendFileOrRange(req, res, realpathSync.native(absPath), headers);
 }

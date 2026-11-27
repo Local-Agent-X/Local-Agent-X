@@ -10,6 +10,7 @@ import type { LAXConfig } from "../types.js";
 import { UI_PAGE_PERMISSIONS_POLICY } from "./app-serving-policy.js";
 import { serveDocumentView } from "./document-view.js";
 import { LOCAL_FILES_PREFIX, serveLocalFile } from "./local-files.js";
+import { sendFileOrRange } from "./byte-range.js";
 
 const UPLOAD_CONTENT_TYPES: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", svg: "image/svg+xml", bmp: "image/bmp", pdf: "application/pdf", txt: "text/plain", json: "application/json", csv: "text/csv", md: "text/markdown", rtf: "application/rtf", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", doc: "application/msword", xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", xls: "application/vnd.ms-excel", pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation", ppt: "application/vnd.ms-powerpoint" };
 const MEDIA_CONTENT_TYPES: Record<string, string> = { mp4: "video/mp4", webm: "video/webm", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", svg: "image/svg+xml" };
@@ -53,7 +54,7 @@ export function serveProtectedAssets(method: string, url: URL, req: IncomingMess
     // inlineable-vs-attachment split /files/ applies below.
     if (!INLINEABLE_FILES.has(ext)) headers["Content-Disposition"] = `attachment; filename="${filename}"`;
     if (ext === "svg") headers["Content-Security-Policy"] = "script-src 'none'";
-    res.writeHead(200, headers); res.end(readFileSync(file)); return true;
+    sendFileOrRange(req, res, file, headers); return true;
   }
   if (url.pathname.startsWith("/brands/")) { serveBrandFile(url, req, res, dataDir); return true; }
   // A file outside the workspace, for the operator only: a signed link names a
@@ -71,8 +72,8 @@ export function serveProtectedAssets(method: string, url: URL, req: IncomingMess
         const ext = file.split(".").pop() || "";
         const headers: Record<string, string> = { "Content-Type": MEDIA_CONTENT_TYPES[ext] || "application/octet-stream", "X-Content-Type-Options": "nosniff" };
         if (ext === "svg") headers["Content-Security-Policy"] = MEDIA_SVG_CSP;
-        res.writeHead(200, headers);
-        res.end(readFileSync(file));
+        // A video plays in pieces as it arrives (byte-range.ts).
+        sendFileOrRange(req, res, file, headers);
         return true;
       }
       json(404, { error: "File not found", path: url.pathname, checked: file, workspace: config.workspace });
@@ -127,7 +128,7 @@ export function serveAgentFile(method: string, url: URL, req: IncomingMessage, r
   if (!INLINEABLE_FILES.has(ext)) headers["Content-Disposition"] = `attachment; filename="${filename}"`;
   if (ext === "html") headers["Content-Security-Policy"] = AGENT_FILE_HTML_CSP;
   if (ext === "svg") headers["Content-Security-Policy"] = AGENT_FILE_SVG_CSP;
-  res.writeHead(200, headers); res.end(readFileSync(file)); return true;
+  sendFileOrRange(req, res, file, headers); return true;
 }
 
 export function servePublicAsset(method: string, url: URL, req: IncomingMessage, res: ServerResponse, publicDir: string): boolean {

@@ -396,7 +396,9 @@ describe("request-handler extraction preserves the recorded legacy contract", ()
       unauthenticatedApi: { status: 401, contentType: "application/json", cacheControl: "", body: '{"error":"Unauthorized"}' },
       authenticatedApi: { status: 200, contentType: "application/json", cacheControl: "", body: `{"name":"${SEEDED_NAME}","value":"${SEEDED_VALUE}"}` },
       coreStatic: { status: 200, contentType: "text/html", cacheControl: "no-cache, must-revalidate", body: "<!doctype html><html><head><title>core</title></head><body>shell</body></html>" },
-      mediaWithRange: { status: 200, contentType: "video/mp4", cacheControl: "", body: "0123456789" },
+      // A range is answered with that piece since 2026-11-26 (server/byte-range.ts):
+      // a video too big for the phone's tunnel plays in pieces.
+      mediaWithRange: { status: 206, contentType: "video/mp4", cacheControl: "", body: "2345" },
       appDeepLink: expect.objectContaining({ status: 200, contentType: "text/html", cacheControl: "no-cache, must-revalidate" }),
       appTraversal: { status: 404, contentType: "application/json", cacheControl: "", body: '{"error":"Not found"}' },
       protectedTraversal: { status: 403, contentType: "application/json", cacheControl: "", body: '{"error":"Path traversal blocked"}' },

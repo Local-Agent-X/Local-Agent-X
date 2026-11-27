@@ -26,10 +26,13 @@ const logger = createLogger("broker-transport.http-tunnel");
  *  agent-built app and the document view with them; the phone's WebView only
  *  obeys them if the tunnel carries them, so they ride along with content-type. */
 const SAFETY_HEADERS = ["content-security-policy", "permissions-policy", "referrer-policy", "x-content-type-options"] as const;
+/** A piece of a file (a video played as it arrives, server/byte-range.ts): the player
+ *  reads which bytes it got, and whether it may ask for more, from these. */
+const RANGE_HEADERS = ["content-range", "accept-ranges"] as const;
 
-function safetyHeadersOf(headers: Headers): Record<string, string> {
+function forwardedHeadersOf(headers: Headers): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const name of SAFETY_HEADERS) {
+  for (const name of [...SAFETY_HEADERS, ...RANGE_HEADERS]) {
     const value = headers.get(name);
     if (value !== null) out[name] = value;
   }
@@ -135,7 +138,7 @@ export class HttpTunnelBridge implements HttpChannel {
         ...(req.body !== undefined ? { body: req.body } : {}),
       });
       const contentType = r.headers.get("content-type") ?? "application/json";
-      const headers = { "content-type": contentType, ...safetyHeadersOf(r.headers) };
+      const headers = { "content-type": contentType, ...forwardedHeadersOf(r.headers) };
       if (isTextContentType(contentType)) {
         const text = await r.text();
         // Oversize is an ERROR, not a truncation: a sliced body parses as a

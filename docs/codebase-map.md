@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 74 top-level dirs · 74 live · 0 with no live importer · 2210 non-test source files · 59 oversized · 277 nearing the size cap.
+**Totals:** 74 top-level dirs · 74 live · 0 with no live importer · 2211 non-test source files · 59 oversized · 277 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -40,7 +40,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/broker-transport/` | 32 | 53 | XL |  |
 | `src/inbox/` | 31 | 8 | M |  |
 | `src/agent-store/` | 30 | 8 | M | 1 |
-| `src/context-manager/` | 29 | 16 | M |  |
+| `src/context-manager/` | 29 | 17 | M |  |
 | `src/context/` | 28 | 11 | M |  |
 | `src/agent-request/` | 27 | 18 | L | 3 |
 | `src/app-runtime/` | 26 | 14 | L |  |

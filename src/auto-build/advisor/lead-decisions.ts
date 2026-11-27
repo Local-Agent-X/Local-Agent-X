@@ -17,6 +17,7 @@ import { oweSessionTool } from "../../agent-request/prepare-request/session-owed
 import { leadChatOf, runLeadTurn, type BuildLeadRef } from "./lead-chat.js";
 import { LEAD_ROLE } from "./lead-role.js";
 import { FIX_CHUNK_BASE } from "../finish-gates/fix-chunk.js";
+import { APP_MESSAGE_LEAD, appAnswerLine } from "../../harness-text.js";
 
 export const LEAD_ACTIONS = ["continue", "fresh", "accept", "narrow", "split", "owed", "overrule", "park"] as const;
 export type LeadAction = typeof LEAD_ACTIONS[number];
@@ -104,8 +105,12 @@ export function leadDecisionsWaitingOn(sessionId: string): string[] {
   return [...pending].filter(([, p]) => p.sessionId === sessionId).map(([id]) => id);
 }
 
-const HEADER = "(Sent by the app, not typed by the user: a build decision is waiting.)";
-const answerLine = (id: string) => `Answer with build_decide(decision_id="${id}", ...): one call. Then, only if it changes something the owner would want to know, a line for them; then end your turn.`;
+const HEADER = `${APP_MESSAGE_LEAD}: a build decision is waiting.)`;
+// Once answered, the lead's view keeps this packet up to its "Decision <id>" line
+// and the answer, not the evidence (context-manager/spent-app-requests.ts): the
+// lead re-read every answered packet in full on every later decision, 64% of each
+// call (label-check-grok, 2026-11-27).
+const answerLine = (id: string) => appAnswerLine("build_decide", "decision_id", id, "one call. Then, only if it changes something the owner would want to know, a line for them; then end your turn.");
 
 /** The message that asks the lead about a chunk the review sent back: the role
  *  on the first, then the evidence. Shared with the lead eval

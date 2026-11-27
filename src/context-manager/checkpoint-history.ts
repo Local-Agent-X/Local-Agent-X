@@ -25,6 +25,7 @@ import type { Session } from "../types.js";
 import { totalTokens } from "./token-estimation.js";
 import { summarizeOldMessages } from "./compaction.js";
 import { pruneFinishedTurnToolResults } from "./prune-tool-results.js";
+import { shortenSpentAppRequests } from "./spent-app-requests.js";
 import {
   CHECKPOINT_KEEP_RECENT,
   CHECKPOINT_REFRESH_MIN_GROWTH,
@@ -50,15 +51,16 @@ function summaryRow(summary: string): ChatCompletionMessageParam {
 
 /**
  * The model's view of the past, without deciding anything — the common path:
- * tool output from finished turns stubbed (prune-tool-results.ts), then an
- * existing checkpoint applied. Pruning first keeps the stubs out of the
- * checkpoint's count and leaves its coversThrough index meaning the same rows.
+ * tool output from finished turns stubbed (prune-tool-results.ts) and app
+ * requests whose turn is over shortened (spent-app-requests.ts), then an
+ * existing checkpoint applied. Both keep the row count, so the checkpoint's
+ * coversThrough index still means the same rows.
  */
 export function applyCheckpoint(
   messages: ChatCompletionMessageParam[],
   checkpoint: { summary: string; coversThrough: number } | undefined,
 ): ChatCompletionMessageParam[] {
-  const pruned = pruneFinishedTurnToolResults(messages);
+  const pruned = shortenSpentAppRequests(pruneFinishedTurnToolResults(messages));
   if (!checkpoint || checkpoint.coversThrough <= 0 || checkpoint.coversThrough > pruned.length) return pruned;
   return [summaryRow(checkpoint.summary), ...pruned.slice(checkpoint.coversThrough)];
 }

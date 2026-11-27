@@ -52,6 +52,29 @@ export function isElidedToolResult(text: string): boolean {
   return text.startsWith(ELIDED_TOOL_RESULT_LEAD);
 }
 
+/** How a message the app sends begins (chat-ws/app-message.ts callers). */
+export const APP_MESSAGE_LEAD = "(Sent by the app, not typed by the user";
+
+/** The line an app message ends with when it asks the agent to answer by one tool
+ *  call naming a request id (a build decision: auto-build/advisor/lead-decisions.ts).
+ *  The request is answered in the turn it lands in or not at all: when that turn
+ *  ends, the app goes on, answered or not. So once its turn is over, its evidence
+ *  is spent and the model's view shortens it (context-manager/spent-app-requests.ts). */
+export function appAnswerLine(tool: string, idArg: string, id: string, then: string): string {
+  return `Answer with ${tool}(${idArg}="${id}", ...): ${then}`;
+}
+
+/** Reads appAnswerLine back: [tool, idArg, id]. */
+export const APP_ANSWER_LINE = /^Answer with ([A-Za-z_][\w]*)\(([A-Za-z_][\w]*)="([^"]+)", \.\.\.\)/m;
+
+/** What follows the headline of a request whose turn is over, in the model's view:
+ *  the answer given (null: none was, and the app went on by its own rules), not
+ *  the evidence. */
+export function spentAppRequestNote(tool: string, answer: string | null): string {
+  const how = answer === null ? `Not answered with ${tool} in its turn; the app went on by its own rules` : `Answered with ${tool}: ${answer}`;
+  return `[${how}. The evidence this request carried is spent; the app still holds it.]`;
+}
+
 /**
  * The turn boundaries. These live here rather than beside their renderer
  * because the literal is needed in two places that must never drift: the

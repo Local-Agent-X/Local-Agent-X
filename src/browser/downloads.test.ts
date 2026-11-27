@@ -184,6 +184,27 @@ describe("browser download quarantine", () => {
     }
   });
 
+  // An Expo preview build was refused as "zip content under a spoofed name",
+  // so a phone build could not be downloaded at all (2026-11-26).
+  it("releases an Android app laid out as one, and refuses a plain zip renamed .apk", async () => {
+    const apkPaths = dirs();
+    const apk = await inspectBrowserDownload({
+      ...apkPaths, sessionId: "apk", sourceUrl: "https://wf-artifacts.eascdn.net/application-3646f735.apk", pageUrl: "https://expo.dev/",
+      suggestedFilename: "application-3646f735.apk", contentType: "application/vnd.android.package-archive",
+      stream: stream(await zip({ "AndroidManifest.xml": "manifest", "classes.dex": "dex", "res/a.xml": "<a/>" })),
+    });
+    expect(apk.status, apk.reason).toBe("released");
+    expect(apk.detectedType).toBe("zip");
+
+    const fakePaths = dirs();
+    const fake = await inspectBrowserDownload({
+      ...fakePaths, sessionId: "fake-apk", sourceUrl: "https://files.test/app.apk", pageUrl: "https://files.test/",
+      suggestedFilename: "app.apk", contentType: "application/octet-stream", stream: stream(await zip({ "readme.txt": "hi" })),
+    });
+    expect(fake.status).toBe("rejected");
+    expect(fake.reason).toMatch(/Android package is missing AndroidManifest\.xml and classes\.dex/);
+  });
+
   it("never auto-releases arbitrary ZIPs named as OpenDocument files", async () => {
     const types: Array<[string, string]> = [
       ["odt", "application/vnd.oasis.opendocument.text"],

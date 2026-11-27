@@ -117,14 +117,19 @@ const TYPE_EXTENSIONS: Record<string, Set<string>> = {
   pdf: new Set([".pdf"]), png: new Set([".png"]), jpeg: new Set([".jpg", ".jpeg"]),
   gif: new Set([".gif"]), webp: new Set([".webp"]), html: new Set([".html", ".htm"]),
   text: new Set([".txt", ".csv", ".json", ".xml", ".md", ".log"]),
-  zip: new Set([".zip", ".docx", ".xlsx", ".pptx", ".odt", ".ods", ".odp"]),
+  // An Android app (.apk) or app bundle (.aab) is a zip. It runs only once
+  // installed on a phone, which is its own step (the android tool's
+  // install_apk), never on this machine. Without these a phone build could
+  // not be downloaded at all: its zip bytes under an .apk name read as a
+  // disguised file (2026-11-26). download-zip.ts checks it is laid out as one.
+  zip: new Set([".zip", ".docx", ".xlsx", ".pptx", ".odt", ".ods", ".odp", ".apk", ".aab"]),
 };
 
 const MIME_TYPES: Record<string, Set<string>> = {
   pdf: new Set(["application/pdf"]), png: new Set(["image/png"]), jpeg: new Set(["image/jpeg"]),
   gif: new Set(["image/gif"]), webp: new Set(["image/webp"]), html: new Set(["text/html"]),
   text: new Set(["text/plain", "text/csv", "application/json", "application/xml", "text/xml", "text/markdown"]),
-  zip: new Set(["application/zip", "application/x-zip-compressed", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.openxmlformats-officedocument.presentationml.presentation", "application/vnd.oasis.opendocument.text", "application/vnd.oasis.opendocument.spreadsheet", "application/vnd.oasis.opendocument.presentation"]),
+  zip: new Set(["application/zip", "application/x-zip-compressed", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.openxmlformats-officedocument.presentationml.presentation", "application/vnd.oasis.opendocument.text", "application/vnd.oasis.opendocument.spreadsheet", "application/vnd.oasis.opendocument.presentation", "application/vnd.android.package-archive"]),
 };
 
 /**

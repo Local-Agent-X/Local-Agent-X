@@ -124,5 +124,18 @@ export async function inspectZipFile(path: string, filename: string): Promise<Zi
     }
   }
 
+  // An Android package is released like a document, so it must be laid out
+  // as one, as an OOXML file must: any zip renamed .apk is not.
+  const android = ANDROID_PACKAGE[extname(filename).toLowerCase()];
+  if (android && !android.every((part) => names.has(part))) {
+    throw new Error(`Android package is missing ${android.filter((part) => !names.has(part)).join(" and ")}.`);
+  }
+
   return { macroEnabled, entryCount: entries.length, compressedBytes, uncompressedBytes };
 }
+
+/** The entries every Android app (.apk) and app bundle (.aab) holds. */
+const ANDROID_PACKAGE: Record<string, readonly string[]> = {
+  ".apk": ["AndroidManifest.xml", "classes.dex"],
+  ".aab": ["base/manifest/AndroidManifest.xml"],
+};

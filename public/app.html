@@ -760,6 +760,19 @@
           <div id="usage-by-model"></div>
         </div>
         <div class="section-card">
+          <div class="section-title">Where it went</div>
+          <div class="section-desc">The runs that used the most tokens, why each one ran, and what stands out. Click a run to see its calls and what its biggest prompt was made of. Dollar figures are what the tokens would cost at API prices.</div>
+          <div class="field" style="max-width:160px">
+            <label class="field-label">Window</label>
+            <select class="field-select" id="usage-runs-hours" onchange="loadUsageRuns()">
+              <option value="24">Last 24 hours</option>
+              <option value="72">Last 3 days</option>
+              <option value="168">Last 7 days</option>
+            </select>
+          </div>
+          <div id="usage-runs" style="margin-top:12px"></div>
+        </div>
+        <div class="section-card">
           <div class="section-title">Spending limits</div>
           <div class="section-desc">Cap real per-call API spend. <strong>Subscription usage is flat-rate and never blocked.</strong> Set 0 for no limit.</div>
           <div class="field-row">
@@ -2012,6 +2025,7 @@
 <script src="/js/settings-tool-policy.js?v=v1"></script>
 <script src="/js/settings-browser-mode.js?v=v2"></script>
 <script src="/js/settings-usage.js?v=v1"></script>
+<script src="/js/settings-usage-runs.js?v=v1"></script>
 <script src="/js/settings-skill-learning.js?v=v1"></script>
 <script src="/js/settings-watching.js?v=v1"></script>
 <script src="/js/settings-calendars.js?v=v1"></script>

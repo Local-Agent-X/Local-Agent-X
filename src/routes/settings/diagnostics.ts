@@ -111,6 +111,8 @@ export const handleDiagnosticsRoutes: RouteHandler = async (method, url, req, re
     return true;
   }
 
+  if (await handleUsageRunsRoutes(method, url, json)) return true;
+
   // Doctor / self-diagnostics API
   if (method === "GET" && url.pathname === "/api/doctor") {
     try {
@@ -123,3 +125,27 @@ export const handleDiagnosticsRoutes: RouteHandler = async (method, url, req, re
 
   return false;
 };
+
+
+/** Where the tokens went: the most expensive recent runs and what drove each
+ *  (usage-report/). GETs that read op records; nothing changes. */
+async function handleUsageRunsRoutes(method: string, url: URL, json: (status: number, data: unknown) => void): Promise<boolean> {
+  if (method === "GET" && url.pathname === "/api/usage/runs") {
+    try {
+      const { usageReport } = await import("../../usage-report/runs.js");
+      const hours = Math.min(Math.max(Number(url.searchParams.get("hours")) || 24, 1), 24 * 30);
+      json(200, usageReport(hours));
+    } catch (e) { json(500, { error: (e as Error).message }); }
+    return true;
+  }
+  const runMatch = method === "GET" ? url.pathname.match(/^\/api\/usage\/runs\/(op_[A-Za-z0-9_]{1,80})$/) : null;
+  if (runMatch) {
+    try {
+      const { runDetail } = await import("../../usage-report/runs.js");
+      const detail = runDetail(runMatch[1]);
+      if (detail) json(200, detail); else json(404, { error: "No such run" });
+    } catch (e) { json(500, { error: (e as Error).message }); }
+    return true;
+  }
+  return false;
+}

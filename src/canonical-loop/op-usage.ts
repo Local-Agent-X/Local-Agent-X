@@ -24,6 +24,9 @@ export interface OpUsageAggregate {
 	usageOutputTokens: number;
 	cacheReadTokens: number;
 	cacheCreateTokens: number;
+	/** OpenAI-style cached tokens (Grok, GPT): a slice INSIDE usageInputTokens,
+	 *  where Anthropic's cacheReadTokens are reported beside it. */
+	promptCachedTokens: number;
 	model: string | null;
 	sawAnyUsage: boolean;
 	sawAnyCache: boolean;
@@ -34,6 +37,7 @@ export function aggregateOpUsage(opId: string): OpUsageAggregate {
 	let usageOutputTokens = 0;
 	let cacheReadTokens = 0;
 	let cacheCreateTokens = 0;
+	let promptCachedTokens = 0;
 	let sawAnyUsage = false;
 	let sawAnyCache = false;
 	let model: string | null = null;
@@ -48,10 +52,12 @@ export function aggregateOpUsage(opId: string): OpUsageAggregate {
 				const uo = payload.usageOutputTokens;
 				const cr = payload.cacheReadTokens;
 				const cc = payload.cacheCreateTokens;
+				const pc = payload.promptCachedTokens;
 				if (typeof ui === "number") { usageInputTokens += ui; sawAnyUsage = true; }
 				if (typeof uo === "number") { usageOutputTokens += uo; sawAnyUsage = true; }
 				if (typeof cr === "number") { cacheReadTokens += cr; sawAnyCache = true; }
 				if (typeof cc === "number") { cacheCreateTokens += cc; sawAnyCache = true; }
+				if (typeof pc === "number") { promptCachedTokens += pc; sawAnyCache = true; }
 			}
 		}
 
@@ -69,6 +75,7 @@ export function aggregateOpUsage(opId: string): OpUsageAggregate {
 			usageOutputTokens: 0,
 			cacheReadTokens: 0,
 			cacheCreateTokens: 0,
+			promptCachedTokens: 0,
 			model: null,
 			sawAnyUsage: false,
 			sawAnyCache: false,
@@ -80,10 +87,50 @@ export function aggregateOpUsage(opId: string): OpUsageAggregate {
 		usageOutputTokens,
 		cacheReadTokens,
 		cacheCreateTokens,
+		promptCachedTokens,
 		model,
 		sawAnyUsage,
 		sawAnyCache,
 	};
+}
+
+/** One model call of an op, in one shape whatever the provider reported. */
+export interface OpCallUsage {
+	turnIdx: number;
+	/** When the call was committed (ISO). */
+	at: string;
+	/** The whole prompt the call sent: on Anthropic, input plus cache reads and
+	 *  writes (reported beside it); elsewhere the input, cached slice included. */
+	promptTokens: number;
+	/** How much of that prompt came from the provider's cache. */
+	cachedTokens: number;
+	outputTokens: number;
+	/** The tools the call asked for, each with its arguments' hash, so a repeat
+	 *  of the same call with the same arguments shows without the arguments. */
+	tools: Array<{ tool: string; argsHash: string; status: string }>;
+}
+
+const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+
+/** Every model call of an op, in order: what explains its cost. Never throws;
+ *  an op it cannot read has no calls. */
+export function opCallUsage(opId: string): OpCallUsage[] {
+	try {
+		return readOpTurns(opId).map((t) => {
+			const p = (t.providerState?.providerPayload ?? {}) as Record<string, unknown>;
+			const anthropicCache = num(p.cacheReadTokens) + num(p.cacheCreateTokens);
+			return {
+				turnIdx: t.turnIdx,
+				at: t.createdAt,
+				promptTokens: num(p.usageInputTokens) + anthropicCache,
+				cachedTokens: num(p.cacheReadTokens) + num(p.promptCachedTokens),
+				outputTokens: num(p.usageOutputTokens),
+				tools: (t.toolCallSummary ?? []).map((c) => ({ tool: c.tool, argsHash: c.argsHash, status: String(c.resultStatus ?? "") })),
+			};
+		});
+	} catch {
+		return [];
+	}
 }
 
 export interface LastTurnUsage {

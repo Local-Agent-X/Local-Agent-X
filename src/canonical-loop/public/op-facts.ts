@@ -30,6 +30,10 @@ export { resolveOpModel } from "../op-model.js";
 // map, both leaves. For a tool that asks "has this request built anything
 // yet" (ask_user) and remembers its answer for the op.
 export { readOpTurns } from "../store.js";
+// What an op's model calls cost, total and call by call, and what one call's
+// prompt held (the Usage tab's drill-down, usage-report/). Both leaves.
+export { aggregateOpUsage, opCallUsage, type OpCallUsage, type OpUsageAggregate } from "../op-usage.js";
+export { readTurnTrace, type StoredTurnTrace } from "../turn-trace-store.js";
 export { getMiddlewareState } from "../middlewares/state.js";
 
 // Where a completed op's result opens (a built app, the newest document it

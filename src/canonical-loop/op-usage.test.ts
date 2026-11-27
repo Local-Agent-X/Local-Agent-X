@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { rmSync } from "node:fs";
 
-import { lastTurnUsage, roundPromptTokens } from "./op-usage.js";
+import { aggregateOpUsage, lastTurnUsage, opCallUsage, roundPromptTokens } from "./op-usage.js";
 import { insertOpTurn } from "./store.js";
 import { opDir } from "../ops/event-log.js";
 import type { OpTurnRow } from "./types.js";
@@ -247,5 +247,32 @@ describe("roundPromptTokens — the prompt one round sent, for the context meter
 		expect(roundPromptTokens(t, "api")).toBe(300_000);
 		expect(roundPromptTokens(t, "cli")).toBeNull();
 		expect(roundPromptTokens(t)).toBeNull();
+	});
+});
+
+// Grok and GPT report cached tokens as a slice inside their input
+// (promptCachedTokens); the cost ledger priced it all at the full rate, and
+// the Usage tab could not tell a cached prompt from an uncached one
+// (2026-11-27).
+describe("an op's cached tokens, whatever the provider", () => {
+	it("aggregates OpenAI-style cached tokens beside the input that holds them", () => {
+		const opId = `op-usage-cached-${Date.now()}`;
+		cleanup.push(opId);
+		insertOpTurn(turn(opId, 0, { model: "grok-4.7", usageInputTokens: 10_000, usageOutputTokens: 50, promptCachedTokens: 6_000 }, { adapterName: "openai-compat" }));
+		insertOpTurn(turn(opId, 1, { model: "grok-4.7", usageInputTokens: 20_000, usageOutputTokens: 80, promptCachedTokens: 9_000 }, { adapterName: "openai-compat" }));
+		expect(aggregateOpUsage(opId)).toMatchObject({ usageInputTokens: 30_000, promptCachedTokens: 15_000, cacheReadTokens: 0, sawAnyCache: true });
+	});
+
+	it("gives every call its whole prompt and cached share in one shape", () => {
+		const opId = `op-usage-calls-${Date.now()}`;
+		cleanup.push(opId);
+		insertOpTurn({ ...turn(opId, 0, { usageInputTokens: 10_000, usageOutputTokens: 50, promptCachedTokens: 6_000 }, { adapterName: "openai-compat" }), toolCallSummary: [{ tool: "read", argsHash: "a1", resultStatus: "ok", durationMs: 5 }] });
+		insertOpTurn(turn(opId, 1, fullUsage));
+		expect(opCallUsage(opId)).toEqual([
+			{ turnIdx: 0, at: "2026-07-07T10:00:00.000Z", promptTokens: 10_000, cachedTokens: 6_000, outputTokens: 50, tools: [{ tool: "read", argsHash: "a1", status: "ok" }] },
+			// Anthropic reports cache reads and writes beside the input: the prompt is all three.
+			{ turnIdx: 1, at: "2026-07-07T10:00:00.000Z", promptTokens: 42_300, cachedTokens: 40_000, outputTokens: 200, tools: [] },
+		]);
+		expect(opCallUsage("op-that-does-not-exist")).toEqual([]);
 	});
 });

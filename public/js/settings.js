@@ -122,6 +122,7 @@ function switchTab(id) {
   if (id === 'image' && typeof refreshVoiceSetup === 'function') refreshVoiceSetup();
   if (id === 'image' && typeof loadUploadsStats === 'function') loadUploadsStats();
   if (id === 'usage' && typeof loadUsage === 'function') loadUsage();
+  if (id === 'usage' && typeof loadUsageRuns === 'function') loadUsageRuns();
   if (id === 'secrets' && typeof loadSecrets === 'function') loadSecrets();
   if (id === 'protocols' && typeof protocolLoad === 'function') protocolLoad();
   if (id === 'appearance' && typeof refreshAppearanceUI === 'function') refreshAppearanceUI();

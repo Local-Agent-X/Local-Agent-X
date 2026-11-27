@@ -44,11 +44,17 @@ export function recordCostEvent(event: CanonicalEvent): void {
 		const provider = op?.contextPack?.routing?.preferredProvider ?? null;
 		const authSource = op?.contextPack?.routing?.authSource;
 
+		// Grok's and GPT's cached tokens are a slice INSIDE their input count
+		// (promptCachedTokens); the ledger, like Anthropic's usage, holds cache
+		// reads beside the input. Moved out of the input and into the reads, they
+		// are priced at the cache rate instead of the full input rate: every Grok
+		// and GPT op was shadow-priced as if nothing were cached (2026-11-27).
+		const cachedInInput = Math.min(usage.promptCachedTokens, usage.usageInputTokens);
 		trackUsage(
 			sessionId ?? "unknown",
 			usage.model,
 			provider ?? "unknown",
-			usage.usageInputTokens,
+			usage.usageInputTokens - cachedInInput,
 			usage.usageOutputTokens,
 			undefined,
 			authSource,
@@ -58,7 +64,7 @@ export function recordCostEvent(event: CanonicalEvent): void {
 			// cached tokens" — absent must not bill as zero on a path that simply
 			// never recorded them.
 			usage.sawAnyCache
-				? { readTokens: usage.cacheReadTokens, writeTokens: usage.cacheCreateTokens }
+				? { readTokens: usage.cacheReadTokens + cachedInInput, writeTokens: usage.cacheCreateTokens }
 				: undefined,
 		);
 	} catch (e) {

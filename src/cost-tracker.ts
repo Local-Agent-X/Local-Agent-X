@@ -71,6 +71,14 @@ export function getPricing(model: string): ModelPricing {
   return resolvePricing(model).pricing;
 }
 
+/** What tokens cost at a model's API price, cache reads and writes at their own
+ *  rates: the ledger's figure for each op, and the Usage tab's for one run. */
+export function usageCostUsd(model: string, inputTokens: number, outputTokens: number, cache?: { readTokens?: number; writeTokens?: number }): number {
+  const { pricing } = resolvePricing(model);
+  return (inputTokens * pricing.input + outputTokens * pricing.output) / 1_000_000 +
+    cacheCostUsd(pricing, cache?.readTokens ?? 0, cache?.writeTokens ?? 0);
+}
+
 /** True only for an exact table entry — what the build-time coverage gate
  *  requires of every selectable model, so the grok-4.3 class (a real model
  *  silently prefix-matched to the wrong tier) can't ship. */
@@ -145,9 +153,7 @@ export function trackUsage(
   const { pricing, source } = resolvePricing(model);
   const cacheReadTokens = cache?.readTokens ?? 0;
   const cacheWriteTokens = cache?.writeTokens ?? 0;
-  const costUsd =
-    (inputTokens * pricing.input + outputTokens * pricing.output) / 1_000_000 +
-    cacheCostUsd(pricing, cacheReadTokens, cacheWriteTokens);
+  const costUsd = usageCostUsd(model, inputTokens, outputTokens, cache);
 
   const record: UsageRecord = {
     sessionId, model, provider, inputTokens, outputTokens,

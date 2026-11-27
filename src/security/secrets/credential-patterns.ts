@@ -81,6 +81,21 @@ const CODE_NAME_RES: readonly RegExp[] = [
   new RegExp(`^${ENV_NAME}$`), // an environment variable's name
 ];
 
+// A stand-in is not a credential either: lowercase words joined by `-` or `_`,
+// no digits, one of them a placeholder word (`demo-api-key`, `your_secret_here`).
+// A build worker starting its dev server with demo Firebase settings
+// (`VITE_FIREBASE_API_KEY=demo-api-key`) was held for the owner's approval as
+// a possible password (Shop Helper, 2026-11-27). A real key has digits or
+// mixed case, so it is still read as one.
+const PLACEHOLDER_VALUE = /^[a-z]+(?:[-_][a-z]+)+$/;
+const PLACEHOLDER_WORD = /(?:^|[-_])(?:demo|test|testing|example|dummy|fake|placeholder|sample|changeme|your|replace|xxx+)(?:[-_]|$)/;
+
+/** Whether a Key-Value value is a stand-in, such as `demo-api-key`. */
+export function isPlaceholderValue(value: string): boolean {
+  const bare = value.replace(/^["'`]|["'`;)}\]]+$/g, "");
+  return PLACEHOLDER_VALUE.test(bare) && PLACEHOLDER_WORD.test(bare);
+}
+
 /** Whether a Key-Value value is a name for the credential rather than the
  *  credential. The punctuation code closes a value with is not part of it. */
 export function namesWhereCredentialLives(value: string): boolean {
@@ -244,7 +259,7 @@ export const CREDENTIAL_PATTERNS: readonly CredentialPattern[] = [
   {
     type: "generic", name: "Key-Value Secret",
     regex: new RegExp(`(?:${CREDENTIAL_KEY_NAMES})[ \\t]*[:=][ \\t]*["']?(?=(?:[*•]*[^\\s"',*•]){8})([^\\s"',]{12,})`, "gi"),
-    namesNotValue: namesWhereCredentialLives,
+    namesNotValue: (value: string) => namesWhereCredentialLives(value) || isPlaceholderValue(value),
   },
   { type: "generic", name: "Base64 Secret Assignment", regex: /(?:private[_-]?key|client[_-]?secret|signing[_-]?key)[ \t]*[:=][ \t]*["']?([A-Za-z0-9+/=]{40,})/gi },
 ];

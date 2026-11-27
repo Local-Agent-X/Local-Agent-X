@@ -29,6 +29,11 @@ describe("Key-Value Secret and code", () => {
     ["a quoted name", 'token: "EXPO_PUBLIC_APPCHECK_DEBUG_TOKEN"'],
     ["a template literal", "const token = `${prefix}${suffix}`;"],
     ["a path closed by a paren", "send(token=self.settings.secret_token)"],
+    // A build worker's dev server with demo Firebase settings was held as a
+    // possible password (Shop Helper, 2026-11-27).
+    ["a demo stand-in", "VITE_FIREBASE_API_KEY=demo-api-key node vite.js"],
+    ["a 'your ... here' stand-in", 'api_key: "your_secret_key_here"'],
+    ["a fake stand-in", "password=fake-password-value"],
   ])("is not raised by %s", (_shape, line) => {
     expect(keyValueHits(line)).toEqual([]);
   });
@@ -38,6 +43,10 @@ describe("Key-Value Secret and code", () => {
     ["a quoted literal", 'api_key: "Zx9qR2mWv7LkP4tY8nHc"'],
     ["a dotted key with digits", "token = pk.eyJ1IjoiZXhhbXBsZSIsImEiOiJ4In0"],
     ["a password that only starts like a name", "password=Summer2026Rocks!"],
+    // A placeholder word inside a real-looking value does not make it a stand-in.
+    ["a key with digits beside a placeholder word", "api_key=test-9fK2mQ7xLp4vR8"],
+    ["a mixed-case value beside a placeholder word", "token=Demo-ProdKey-Alpha-Bravo"],
+    ["lowercase words with no placeholder word", "password=correct-horse-battery-staple"],
     ["a lowercase snake password", "password=correct_horse_battery_staple"],
     ["a base64url token with underscores", "token=xK9_mQ2vLp_7RtWz3nYb4"],
     ["a token after a dot", "secret = sess.Zx9qR2mWv7LkP4tY8nHc"],

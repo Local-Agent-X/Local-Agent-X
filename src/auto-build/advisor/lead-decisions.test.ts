@@ -7,7 +7,7 @@ import { canHaveLead } from "./lead-chat.js";
 import { askLead, askLeadBuildCall, isLeadDecisionPending, leadDecisionsWaitingOn, type LeadSituation } from "./lead-decisions.js";
 import { LEAD_ROLE } from "./lead-role.js";
 import { buildDecideTool, readDecision } from "./build-decide-tool.js";
-import { owedToolNamesFor } from "../../agent-request/prepare-request/session-owed-tools.js";
+import { owedToolNamesFor, requiredToolFor } from "../../agent-request/prepare-request/session-owed-tools.js";
 import { FINISH_FIX_BREAK_GROUNDS, SKEPTIC_BREAK_GROUNDS } from "../chunk-review/skeptic-bar.js";
 
 const situation: LeadSituation = {
@@ -136,11 +136,33 @@ describe("the build lead", () => {
     expect(decision).toMatchObject({ action: "continue" });
   });
 
-  it("a lead that ends its turn without deciding is no answer, and nothing is left waiting", async () => {
+  // Four days of builds, 2026-11-24 to 27: the lead ended 21 of 28 decision
+  // turns having worked its answer out in words, without the call.
+  it("a lead that ends its turn without deciding is asked once more, in a turn that must open with build_decide", async () => {
+    const requiredAt: Array<string | undefined> = [];
+    setChatHandler(async (sessionId, message) => {
+      messages.push({ sessionId, message });
+      requiredAt.push(requiredToolFor(sessionId));
+      const id = message.match(/build_decide\(decision_id="([^"]+)"/)?.[1];
+      if (messages.length === 2 && id) await buildDecideTool.execute({ decision_id: id, action: "overrule", reasoning: "the throw is the required one", evidence: "main.tsx:12" }, undefined as never);
+    });
+    const decision = await askLead(ref, situation, { answerMs: 10_000 });
+    expect(decision).toMatchObject({ action: "overrule" });
+    expect(messages).toHaveLength(2);
+    expect(messages[1].message).toContain("is still waiting: your last turn ended without the build_decide call");
+    // Only the second turn is pinned to the tool; nothing stays pinned after.
+    expect(requiredAt).toEqual([undefined, "build_decide"]);
+    expect(requiredToolFor("chat-origin")).toBeUndefined();
+    expect(owedToolNamesFor("chat-origin")).toEqual([]);
+  });
+
+  it("a lead that does not answer the second time either is no answer, and nothing is left waiting", async () => {
     leadAnswers(null);
-    expect(await askLead(ref, situation, { answerMs: 5_000 })).toBeNull();
+    expect(await askLead(ref, situation, { answerMs: 10_000 })).toBeNull();
+    expect(messages).toHaveLength(2);
     const id = messages[0].message.match(/decision_id="([^"]+)"/)![1];
     expect(isLeadDecisionPending(id)).toBe(false);
+    expect(requiredToolFor("chat-origin")).toBeUndefined();
   });
 
   it("is told the owner reads the chat but not the engine's posts, and says what it decided when it matters", () => {

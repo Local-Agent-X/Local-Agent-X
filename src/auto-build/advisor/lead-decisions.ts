@@ -13,7 +13,7 @@
  * again in the same turn.
  */
 import { randomBytes } from "node:crypto";
-import { oweSessionTool } from "../../agent-request/prepare-request/session-owed-tools.js";
+import { oweSessionTool, requireSessionTool } from "../../agent-request/prepare-request/session-owed-tools.js";
 import { leadChatOf, runLeadTurn, type BuildLeadRef } from "./lead-chat.js";
 import { LEAD_ROLE } from "./lead-role.js";
 import { FIX_CHUNK_BASE } from "../finish-gates/fix-chunk.js";
@@ -177,17 +177,41 @@ async function ask(
   // The packet says "answer with build_decide", so the turn it lands in must
   // have that tool, whatever else selected its tool set.
   const releaseTool = oweSessionTool(sessionId, "build_decide");
+  const gaveUp = new Promise<null>((r) => {
+    setTimeout(() => r(null), opts.answerMs ?? LEAD_ANSWER_MS);
+    opts.signal?.addEventListener("abort", () => r(null), { once: true });
+  });
+  // A turn that ended without answering is no answer.
+  const endedUnanswered = (turn: Promise<unknown>) => turn.then(() => new Promise<typeof UNANSWERED>((r) => setTimeout(() => r(UNANSWERED), 1_000)));
   try {
-    const turn = runLeadTurn(sessionId, render(id, first)).catch(() => undefined);
-    const timeout = new Promise<null>((r) => setTimeout(() => r(null), opts.answerMs ?? LEAD_ANSWER_MS));
-    const cancelled = new Promise<null>((r) => opts.signal?.addEventListener("abort", () => r(null), { once: true }));
-    // A turn that ended without answering is no answer either.
-    const unanswered = turn.then(() => new Promise<null>((r) => setTimeout(() => r(null), 1_000)));
-    return await Promise.race([answered, timeout, cancelled, unanswered]);
+    const got = await Promise.race([answered, gaveUp, endedUnanswered(runLeadTurn(sessionId, render(id, first)).catch(() => undefined))]);
+    if (got !== UNANSWERED || opts.signal?.aborted) return got === UNANSWERED ? null : got;
+    // It worked the decision out and ended its turn without the call: asked
+    // once more, in a turn that must open with it.
+    const releaseRequired = requireSessionTool(sessionId, "build_decide");
+    try {
+      const again = await Promise.race([answered, gaveUp, endedUnanswered(runLeadTurn(sessionId, answerNow(id)).catch(() => undefined))]);
+      return again === UNANSWERED ? null : again;
+    } finally {
+      releaseRequired();
+    }
   } finally {
     pending.delete(id);
     releaseTool();
   }
+}
+
+const UNANSWERED = Symbol("the lead's turn ended with no answer");
+
+/** The second ask for a decision the lead's turn left unanswered. */
+function answerNow(id: string): string {
+  return [
+    HEADER,
+    "",
+    `Decision ${id} is still waiting: your last turn ended without the build_decide call. Give the answer you reached, now.`,
+    "",
+    answerLine(id),
+  ].join("\n");
 }
 
 /** Ask the lead about a chunk the review sent back. */

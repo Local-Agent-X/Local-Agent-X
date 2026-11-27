@@ -23,7 +23,7 @@ import {
   type ProductBuildTurn,
 } from "./product-build-routing.js";
 import { deviceToolNamesFor } from "./device-tools.js";
-import { owedToolNamesFor } from "./session-owed-tools.js";
+import { owedToolNamesFor, requiredToolFor } from "./session-owed-tools.js";
 import { inSessionOrder, rememberSessionTools, sessionToolsOf } from "./session-tool-memory.js";
 
 const logger = createLogger("agent-request.prepare-request.tools");
@@ -395,7 +395,8 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
     productBuildTurn,
     // Only a workflow the user chose explicitly (/greenfield) pins a tool. A
     // continuation is matched from wording, which is a guess (product-build-routing.ts).
-    forcedToolName: productBuildTurn?.kind === "methodology" ? productBuildTurn.targetTool : undefined,
+    // And an answer the session was asked for and did not give (session-owed-tools.ts).
+    forcedToolName: productBuildTurn?.kind === "methodology" ? productBuildTurn.targetTool : requiredToolFor(input.sessionId),
     isBridge,
   };
 }

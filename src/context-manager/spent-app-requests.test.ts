@@ -49,6 +49,17 @@ describe("shortenSpentAppRequests", () => {
     expect(text(shortenSpentAppRequests(history)[2])).toBe(text(history[2]));
   });
 
+  // The engine asks again when a decision's turn ended unanswered
+  // (lead-decisions.ts answerNow): the evidence must still be there to answer from.
+  it("a decision asked again is still open: its evidence stays until a later turn, then it carries the answer", () => {
+    const again: ChatCompletionMessageParam = { role: "user", content: `(Sent by the app, not typed by the user: a build decision is waiting.)\n\nDecision bd-1 is still waiting: your last turn ended without the build_decide call.\n\nAnswer with build_decide(decision_id="bd-1", ...): one call.` };
+    const open = [packet("bd-1"), { role: "assistant", content: "It is the required throw; overruling." } as ChatCompletionMessageParam, again];
+    expect(text(shortenSpentAppRequests(open)[0])).toContain("FINDING-TEXT");
+    const closed = shortenSpentAppRequests([...open, decide("bd-1", { action: "overrule", reasoning: "required throw" }), result("bd-1"), user("how is it going?")]);
+    expect(text(closed[0])).not.toContain("FINDING-TEXT");
+    expect(text(closed[0])).toContain('Answered with build_decide: action="overrule"');
+  });
+
   it("leaves the decision still in its turn whole, answered yet or not", () => {
     const waiting = [user("earlier"), packet("bd-aaaa1111")];
     expect(shortenSpentAppRequests(waiting)).toBe(waiting);

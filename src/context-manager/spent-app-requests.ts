@@ -60,10 +60,16 @@ function shortened(content: string, id: string, tool: string, answer: string | n
   return [...kept, spentAppRequestNote(tool, answer)].join("\n");
 }
 
-/** The index of the next user-authored row after `i`: the start of the next turn. */
-function nextTurnStart(messages: readonly ChatCompletionMessageParam[], i: number): number {
+/** The index of the next user-authored row after `i`: the start of the next
+ *  turn. A row that names the same request is the app asking for it again (a
+ *  build decision whose turn ended unanswered, lead-decisions.ts answerNow):
+ *  the request is still open through it. */
+function nextTurnStart(messages: readonly ChatCompletionMessageParam[], i: number, id: string): number {
   for (let j = i + 1; j < messages.length; j++) {
-    if (messages[j].role === "user" && !isHarnessRow(messages[j])) return j;
+    const m = messages[j];
+    if (m.role !== "user" || isHarnessRow(m)) continue;
+    if (typeof m.content === "string" && m.content.startsWith(APP_MESSAGE_LEAD) && m.content.includes(id)) continue;
+    return j;
   }
   return -1;
 }
@@ -78,7 +84,7 @@ export function shortenSpentAppRequests(messages: ChatCompletionMessageParam[]):
     const asked = APP_ANSWER_LINE.exec(m.content);
     if (!asked) return m;
     const [, tool, idArg, id] = asked;
-    const next = nextTurnStart(messages, i);
+    const next = nextTurnStart(messages, i, id);
     if (next < 0) return m; // its turn is the one still going
     calls ??= callsIn(messages);
     const call = calls.find((c) => c.at > i && c.at < next && c.tool === tool && c.args[idArg] === id);

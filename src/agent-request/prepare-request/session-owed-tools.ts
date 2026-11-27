@@ -38,6 +38,30 @@ export function oweSessionTool(sessionId: string, toolName: string): () => void 
   };
 }
 
+const required = new Map<string, string>();
+
+/**
+ * The session's next turn must open with a call to `toolName`, until the
+ * returned function is called: the turn's tool choice is pinned to it
+ * (tool-selection.ts forcedToolName). For an answer already asked for once
+ * and not given: a build's lead ended 21 of 28 decision turns without
+ * calling `build_decide`, having worked out its answer in words (four days of
+ * builds, 2026-11-24 to 27), and each cost the build a fix round.
+ */
+export function requireSessionTool(sessionId: string, toolName: string): () => void {
+  const release = oweSessionTool(sessionId, toolName);
+  required.set(sessionId, toolName);
+  return () => {
+    if (required.get(sessionId) === toolName) required.delete(sessionId);
+    release();
+  };
+}
+
+/** The tool `sessionId`'s next turn must open with, if any. */
+export function requiredToolFor(sessionId: string): string | undefined {
+  return required.get(sessionId);
+}
+
 /** The tools `sessionId` is waiting to be called with; none when nothing waits. */
 export function owedToolNamesFor(sessionId: string): string[] {
   return [...(owed.get(sessionId)?.keys() ?? [])];

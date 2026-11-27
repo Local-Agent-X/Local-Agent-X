@@ -138,10 +138,34 @@ describe("launchApp", () => {
     await new Promise<void>((resolve) => other.listen(port, "127.0.0.1", resolve));
     try {
       const launch = { start: "npm run dev", readyUrl: `http://127.0.0.1:${port}/`, readyTimeoutMs: 15_000 };
-      await expect(launchApp(dir, launch)).rejects.toThrow(/already answering at http:\/\/127\.0\.0\.1:\d+\/, so the judge would score it/);
+      // Nothing of this server's own was left running there: someone else's app stays, and is refused.
+      const nothingLeft = { endLeftovers: async () => ({ ended: [], kept: [] }) };
+      await expect(launchApp(dir, launch, undefined, 0, nothingLeft)).rejects.toThrow(/already answering at http:\/\/127\.0\.0\.1:\d+\/, so the judge would score it/);
       expect(seam.wrapped).toEqual([]);
     } finally {
       await new Promise((resolve) => other.close(resolve));
+    }
+  });
+
+  // Shop Helper, 2026-11-27: a worker's dev server on the app's port left chunk 1 unjudged.
+  it("ends what an agent left running from the project on the app's port, then starts the app", async () => {
+    const left = (await import("node:http")).createServer((_q, s) => s.end("a worker's leftover server"));
+    const port = await freePort();
+    await new Promise<void>((resolve) => left.listen(port, "127.0.0.1", resolve));
+    const swept: string[] = [];
+    const endLeftovers = async (folder: string) => {
+      swept.push(folder);
+      left.closeAllConnections();
+      await new Promise((resolve) => left.close(resolve));
+      return { ended: [{ pid: 1, name: "node.exe" }], kept: [] };
+    };
+    const launch = { start: "npm run dev", readyUrl: `http://127.0.0.1:${port}/`, readyTimeoutMs: 15_000, env: { PORT: String(port) } };
+    const app = await launchApp(dir, launch, undefined, 0, { endLeftovers });
+    try {
+      expect(swept).toEqual([dir]);
+      expect(seam.wrapped).toHaveLength(1);
+    } finally {
+      await app.stop();
     }
   });
 

@@ -15,6 +15,7 @@
  * counts as "alive"). Hard timeout: launch.readyTimeoutMs.
  */
 
+import { endLeftoverProcessesIn } from "../../agency/worktree-leftovers.js";
 import type { ChildProcess } from "node:child_process";
 import { killProcessGroup } from "../../process-tree-kill.js";
 import { getSandboxStatus } from "../../sandbox/index.js";
@@ -51,7 +52,10 @@ export interface LaunchedApp {
  */
 export class LaunchRefused extends Error {}
 
-export async function launchApp(projectDir: string, launch: ProjectLaunchSpec, signal?: AbortSignal, workerIndex = 0): Promise<LaunchedApp> {
+export async function launchApp(
+  projectDir: string, launch: ProjectLaunchSpec, signal?: AbortSignal, workerIndex = 0,
+  deps: { endLeftovers: typeof endLeftoverProcessesIn } = { endLeftovers: endLeftoverProcessesIn },
+): Promise<LaunchedApp> {
   const stdout: string[] = [];
   const stderr: string[] = [];
 
@@ -78,8 +82,17 @@ export async function launchApp(projectDir: string, launch: ProjectLaunchSpec, s
   // (one an agent left running) passed the ready poll in place of ours, which
   // had failed to bind; then it was stopped mid-suite and every scenario after
   // read "connection refused" against the app (label-check, 2026-11-24).
+  // What an agent left running from this folder is ended first: a worker's
+  // dev server on the app's port left Shop Helper's chunk 1 unjudged
+  // (2026-11-27). Only this server's own leftovers are ended
+  // (worktree-leftovers.ts); anything else still answering is refused.
   if (await ping(url)) {
-    throw new LaunchRefused(`something is already answering at ${url}, so the judge would score it instead of the app it starts. Stop whatever is serving there, then score again.`);
+    const swept = await deps.endLeftovers(projectDir);
+    const freeBy = Date.now() + STOP_WAIT_MS;
+    while (swept.ended.length > 0 && Date.now() < freeBy && await ping(url)) await new Promise((r) => setTimeout(r, 100));
+    if (await ping(url)) {
+      throw new LaunchRefused(`something is already answering at ${url}, so the judge would score it instead of the app it starts. Stop whatever is serving there, then score again.`);
+    }
   }
 
   // spawnCaged rejects only when nothing could be started (the cage refused, its proof is pending).

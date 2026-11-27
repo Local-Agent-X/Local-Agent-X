@@ -16,7 +16,7 @@ interface ReadEventsOptions {
 function readEvents(options: ReadEventsOptions = {}): Array<Record<string, unknown>> {
   return [
     { type: "context_status", percentage: 0, level: "ok", usedTokens: 30, maxTokens: 32768, compacted: false },
-    { type: "chat_op_started", opId: "op-read-1" },
+    { type: "chat_op_started", opId: "op-read-1", startedAt: 1_000 },
     {
       type: "tool_start",
       toolName: "read",

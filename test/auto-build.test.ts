@@ -264,7 +264,8 @@ describe("run_build_plan — tool definition", () => {
     expect(params.properties).toHaveProperty("max_chunks");
   });
 
-  it("description mentions the feature flag", () => {
-    expect(runBuildPlanTool.description).toContain("LAX_AUTO_BUILD_ENABLED");
+  // The switch is the tool's blocked result, never its description (start_app_build, 2026-11-27).
+  it("description names no setting", () => {
+    expect(runBuildPlanTool.description).not.toContain("LAX_AUTO_BUILD_ENABLED");
   });
 });

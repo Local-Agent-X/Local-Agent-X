@@ -122,9 +122,12 @@ describe("run_build_plan — links the build to its chat", () => {
 });
 
 describe("Tool registration shape", () => {
-  it("has a stable name + a description mentioning the flag", () => {
+  // The switch is the tool's blocked result, never its description: Grok read
+  // "Gated behind LAX_AUTO_BUILD_ENABLED" as "off unless set" and never called
+  // it (2026-11-27; the "is BLOCKED when ... is off" case above holds the result).
+  it("has a stable name, and a description that names no setting", () => {
     expect(startAppBuildTool.name).toBe("start_app_build");
-    expect(startAppBuildTool.description).toContain("LAX_AUTO_BUILD_ENABLED");
+    expect(startAppBuildTool.description).not.toContain("LAX_AUTO_BUILD_ENABLED");
   });
 
   it("start_app_build disambiguates loudly from build_app (the apps-builder)", () => {

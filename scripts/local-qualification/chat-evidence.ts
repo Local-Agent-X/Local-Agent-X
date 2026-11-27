@@ -88,10 +88,13 @@ function isContextStatus(event: Record<string, unknown>): boolean {
     && typeof event.compacted === "boolean";
 }
 
+// `startedAt` is when the turn began, in epoch ms (the chat's status-line
+// clock, canonical-loop/chat-runner.ts).
 function isChatOperationStarted(event: Record<string, unknown>): boolean {
-  return hasExactOwnKeys(event, ["type", "opId"])
+  return hasExactOwnKeys(event, ["type", "opId", "startedAt"])
     && event.type === "chat_op_started"
-    && isNonemptyString(event.opId);
+    && isNonemptyString(event.opId)
+    && isNonnegativeInteger(event.startedAt);
 }
 
 function isTurnProvider(event: Record<string, unknown>): boolean {

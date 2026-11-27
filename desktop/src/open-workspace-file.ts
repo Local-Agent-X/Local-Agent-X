@@ -83,19 +83,24 @@ function resolveWorkspacePath(workspacePath: string): Resolved {
 function resolveHomePath(absPath: string, allowed: (path: string) => boolean): Resolved {
   const home = resolve(homedir());
   const file = resolve(absPath);
-  const check = (path: string): string | null => {
-    const rel = inside(home, path);
+  const check = (path: string, root: string): string | null => {
+    const rel = inside(root, path);
     if (rel === null) return "rejected: not in your user folder";
     if (rel.split(sep).some((part) => PRIVATE_COMPONENT.test(part))) return "rejected: a hidden or app-data folder";
     if (win32RenamesComponent(rel)) return "rejected: a name ends in a dot or space";
     if (!allowed(path)) return "rejected: not a document or media file";
     return null;
   };
-  const asWritten = check(file);
+  const asWritten = check(file, home);
   if (asWritten) return { refused: asWritten };
   let real: string;
   try { real = realpathSync.native(file); } catch { return { refused: "rejected: no such file" }; }
-  const asResolved = check(real);
+  // The resolved file is held to the resolved home: realpath writes a short
+  // (8.3) name such as RUNNER~1 out in full, so a home given in short form
+  // would otherwise read every file in it as outside.
+  let realHome = home;
+  try { realHome = realpathSync.native(home); } catch { /* no such folder: nothing resolves inside it */ }
+  const asResolved = check(real, realHome);
   return asResolved ? { refused: asResolved } : { file: real };
 }
 

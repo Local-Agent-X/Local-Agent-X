@@ -9,7 +9,7 @@
 // project root: on the owner's machine it is Documents\Local Agent X\workspace
 // while the project root's own workspace folder is another directory, and every
 // click on a deck there did nothing (2026-11-23).
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -139,7 +139,16 @@ describe("open-file IPC", () => {
 
 	it("refuses a path not written as a workspace file, so nothing else in the project opens", async () => {
 		expect(await openFile("README.md")).toBe("rejected: not a workspace file");
-		expect(await openFile(join(mocks.root, "README.md"))).toBe("rejected: not in your user folder");
+		// A home that does not hold the project: where the temp folder sits
+		// (inside the real home's AppData on a PC) must not change the answer.
+		const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+		process.env.HOME = process.env.USERPROFILE = join(base, "another-home");
+		try {
+			expect(await openFile(join(mocks.root, "README.md"))).toBe("rejected: not in your user folder");
+		} finally {
+			process.env.HOME = saved.HOME;
+			process.env.USERPROFILE = saved.USERPROFILE;
+		}
 		expect(await openFile(42 as unknown as string)).toBe("rejected: not a file path");
 		expect(mocks.openPath).not.toHaveBeenCalled();
 	});
@@ -175,7 +184,18 @@ describe("files outside the workspace", () => {
 
 	it.each(["Pictures/photo.png", "Downloads/menu.pdf"])("opens %s in its own app", async (file) => {
 		expect(await openFile(inHome(file))).toBe("");
-		expect(mocks.openPath).toHaveBeenCalledWith(inHome(file));
+		// The file as it resolves: on a runner whose temp folder is a short
+		// (8.3) name, that is the long form of the path given.
+		expect(mocks.openPath).toHaveBeenCalledWith(realpathSync.native(inHome(file)));
+	});
+
+	it("opens a file in a home folder given through a link, as it resolves", async () => {
+		const linked = join(base, "home-link");
+		if (!existsSync(linked)) symlinkSync(home, linked, "junction");
+		process.env.HOME = linked;
+		process.env.USERPROFILE = linked;
+		expect(await openFile(join(linked, "Pictures", "photo.png"))).toBe("");
+		expect(mocks.openPath).toHaveBeenCalledWith(realpathSync.native(inHome("Pictures/photo.png")));
 	});
 
 	it("never opens a program there", async () => {
@@ -199,7 +219,7 @@ describe("files outside the workspace", () => {
 	it("shows any linked file in its folder, a program included, since showing runs nothing", () => {
 		expect(reveal(inHome("Downloads", "setup.exe"))).toBe("");
 		expect(reveal("workspace/report.pdf")).toBe("");
-		expect(mocks.showItemInFolder).toHaveBeenCalledWith(inHome("Downloads", "setup.exe"));
+		expect(mocks.showItemInFolder).toHaveBeenCalledWith(realpathSync.native(inHome("Downloads", "setup.exe")));
 		expect(mocks.showItemInFolder).toHaveBeenCalledWith(inWorkspace("report.pdf"));
 		expect(reveal(inHome("Pictures", "gone.png"))).toBe("rejected: no such file");
 		expect(mocks.showItemInFolder).toHaveBeenCalledTimes(2);

@@ -73,6 +73,8 @@ interface LoadedChatWs {
   connectChatWs(): void;
   retireChatWs(reason: string): void;
   getSocket(): FakeSocket | null;
+  /** The page's `window`: the pong handler stamps `chatWsLastPong` on it. */
+  win: { chatWsLastPong: number };
 }
 
 function loadChatWs(): LoadedChatWs {
@@ -81,7 +83,7 @@ function loadChatWs(): LoadedChatWs {
     function () { const s = makeFakeSocket(); built.push(s); return s; },
     { CONNECTING, OPEN, CLOSING, CLOSED },
   );
-  const tail = "\nreturn { connectChatWs, retireChatWs, getSocket: () => chatWs };";
+  const tail = "\nreturn { connectChatWs, retireChatWs, getSocket: () => chatWs, win: window };";
   // eslint-disable-next-line no-new-func
   const factory = new Function(...LOAD_SCOPE, src + tail);
   return factory(
@@ -112,6 +114,43 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+});
+
+// The connection log, 2026-11-27: with the window in the background the page
+// dropped a healthy connection every few minutes ("no pong within 35000ms",
+// then "reconnected after 60s down"). A background window's timers run about
+// once a minute, so "the last pong is older than 35s" was always true.
+describe("the heartbeat with the window in the background", () => {
+  const pings = (ws: FakeSocket) => ws.sent.filter((f) => f.includes('"ping"')).length;
+  const pong = () => { api.win.chatWsLastPong = Date.now(); };
+
+  it("keeps a connection whose pings are answered, however slowly its timer runs", () => {
+    api.connectChatWs();
+    const ws = built[0];
+    ws.open();
+    pong();
+    for (let minute = 0; minute < 5; minute++) {
+      // A slowed timer: a minute passes, then one tick runs.
+      vi.setSystemTime(Date.now() + 60_000);
+      vi.advanceTimersToNextTimer();
+      pong();
+    }
+    expect(api.getSocket()).toBe(ws);
+    expect(built).toHaveLength(1);
+    expect(pings(ws)).toBeGreaterThanOrEqual(5);
+  });
+
+  it("still retires a connection whose ping got no pong", () => {
+    api.connectChatWs();
+    const ws = built[0];
+    ws.open();
+    pong();
+    vi.advanceTimersByTime(25_000); // a ping goes out; nothing answers it
+    expect(api.getSocket()).toBe(ws);
+    vi.advanceTimersByTime(50_000);
+    expect(api.getSocket()).not.toBe(ws);
+    expect(ws.closed).toBe(true);
+  });
 });
 
 describe("a page never runs two chat sockets", () => {

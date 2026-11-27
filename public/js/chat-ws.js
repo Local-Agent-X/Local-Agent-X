@@ -51,16 +51,29 @@ let chatWsPingTimer = null;
 window.chatWsLastPong = 0;
 const WS_PING_INTERVAL_MS = 25_000;
 const WS_PONG_TIMEOUT_MS = 35_000;
+// When the last ping went out. The check is "that ping got no pong for
+// WS_PONG_TIMEOUT_MS", never "the last pong is old": a window in the
+// background has its timers slowed to about one tick a minute, so the last
+// pong is always older than the timeout by the next tick, and the page
+// dropped a healthy connection every few minutes for as long as it was not
+// in front ("no pong within 35000ms", then "reconnected after 60s down";
+// the connection log, 2026-11-27). The pong itself is a network event and
+// is not slowed.
+let chatWsLastPingAt = 0;
+function sendChatWsPing() {
+  try {
+    if (chatWs && chatWs.readyState === WebSocket.OPEN) {
+      chatWs.send(JSON.stringify({ type: 'ping', ts: Date.now() }));
+      chatWsLastPingAt = Date.now();
+    }
+  } catch {}
+}
 function startChatWsHeartbeat() {
   stopChatWsHeartbeat();
   window.chatWsLastPong = 0;
   // Immediate ping on connection-up — chat-send.js checks `chatWsLastPong > 0`
   // and falls back to HTTP if no pong has landed yet.
-  try {
-    if (chatWs && chatWs.readyState === WebSocket.OPEN) {
-      chatWs.send(JSON.stringify({ type: 'ping', ts: Date.now() }));
-    }
-  } catch {}
+  sendChatWsPing();
   chatWsPingTimer = setInterval(() => {
     if (!chatWs || chatWs.readyState !== WebSocket.OPEN) return;
     // First-tick check: if we've never received a pong since open, the
@@ -69,11 +82,13 @@ function startChatWsHeartbeat() {
       retireChatWs('no pong since connection open — half-open from start');
       return;
     }
-    if (Date.now() - window.chatWsLastPong > WS_PONG_TIMEOUT_MS) {
+    const unanswered = window.chatWsLastPong < chatWsLastPingAt;
+    if (unanswered && Date.now() - chatWsLastPingAt > WS_PONG_TIMEOUT_MS) {
       retireChatWs('no pong within ' + WS_PONG_TIMEOUT_MS + 'ms — half-open');
       return;
     }
-    try { chatWs.send(JSON.stringify({ type: 'ping', ts: Date.now() })); } catch {}
+    // A ping still waiting for its pong is given its time before another goes out.
+    if (!unanswered) sendChatWsPing();
   }, WS_PING_INTERVAL_MS);
 }
 function stopChatWsHeartbeat() {

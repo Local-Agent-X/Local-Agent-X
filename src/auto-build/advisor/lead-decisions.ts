@@ -16,6 +16,7 @@ import { randomBytes } from "node:crypto";
 import { oweSessionTool } from "../../agent-request/prepare-request/session-owed-tools.js";
 import { leadChatOf, runLeadTurn, type BuildLeadRef } from "./lead-chat.js";
 import { LEAD_ROLE } from "./lead-role.js";
+import { FIX_CHUNK_BASE } from "../finish-gates/fix-chunk.js";
 
 export const LEAD_ACTIONS = ["continue", "fresh", "accept", "narrow", "split", "owed", "overrule", "park"] as const;
 export type LeadAction = typeof LEAD_ACTIONS[number];
@@ -115,7 +116,9 @@ export function leadPacket(id: string, s: LeadSituation, first: boolean): string
     HEADER,
     ...(first ? ["", LEAD_ROLE] : []),
     "",
-    `Decision ${id}: chunk ${c.number}/${s.totalChunks}, "${c.title}", after fix round ${s.round} of at most ${s.maxRounds}.`,
+    // A finish fix is named by its title alone: the lead repeats what it is
+    // told to the owner, and its number is the engine's (fix-chunk.ts).
+    `Decision ${id}: ${/^Finish fix \d+:/.test(c.title) ? `"${c.title}"` : `chunk ${c.number}/${s.totalChunks}, "${c.title}"`}, after fix round ${s.round} of at most ${s.maxRounds}.`,
     ...(s.final ? [
       `This is the last decision for this chunk: its rounds are spent. "accept", "owed" and "overrule" land it ` +
       `(the engine still refuses one whose build, tests or held-out scenarios fail); "park" sets it aside with ` +
@@ -141,7 +144,7 @@ export function buildCallPacket(id: string, s: BuildCallSituation, first: boolea
     HEADER,
     ...(first ? ["", LEAD_ROLE] : []),
     "",
-    `Decision ${id}: ${s.title} (at chunk ${s.chunkNumber}/${s.totalChunks}).`,
+    `Decision ${id}: ${s.title} (${s.chunkNumber > FIX_CHUNK_BASE ? "during the finish checks" : `at chunk ${s.chunkNumber}/${s.totalChunks}`}).`,
     "",
     s.evidence,
     "",

@@ -131,7 +131,7 @@ async function askSkeptic(input: SkepticInput): Promise<SkepticVerdict> {
     result = await runChunkAgent({
       role: "chunk-skeptic",
       task: buildSkepticTask(input),
-      title: `Skeptic: chunk ${input.chunk.number}, ${input.chunk.title}`,
+      title: isFinishFixChunk(input.chunk) ? `Skeptic: ${input.chunk.title}` : `Skeptic: chunk ${input.chunk.number}, ${input.chunk.title}`,
       projectDir: input.projectDir,
       silenceLimitMs: input.silenceLimitMs ?? SKEPTIC_SILENCE_LIMIT_MS,
       signal: input.signal,

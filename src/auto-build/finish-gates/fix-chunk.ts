@@ -29,6 +29,25 @@ export function isFinishFixChunk(chunk: Pick<ParsedChunk, "number" | "phase">): 
   return (chunk.phase === FIX_CHUNK_PHASE && chunk.number > FIX_CHUNK_BASE) || SPLIT_FROM_FIX.test(chunk.phase);
 }
 
+/**
+ * `text` with every mention of these finish fixes by number ("Chunk 1011
+ * judged", "chunk 1011/5", "chunk 1011's") put by its title. Applied where the
+ * build's text reaches the owner (the card's progress lines, the build's report
+ * and summary), so a message written anywhere in the engine, now or later,
+ * reads the same. Only the numbers of the fixes given are touched: a plan's
+ * "chunk 7" stays.
+ */
+export function nameFinishFixes(text: string, fixes: readonly Pick<ParsedChunk, "number" | "title">[]): string {
+  let out = text;
+  for (const fix of fixes) {
+    const asRegex = fix.title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    // Where the title already follows the number, the number goes and the title stays once.
+    out = out.replace(new RegExp(`\\b[Cc]hunk ${fix.number}(?:/\\d+)?(?:,|:)? "?${asRegex}"?`, "g"), () => fix.title);
+    out = out.replace(new RegExp(`\\b[Cc]hunk ${fix.number}(?:/\\d+)?\\b`, "g"), () => fix.title);
+  }
+  return out;
+}
+
 /** The fix chunk a split part came from, or null for any other chunk. */
 export function splitFromFix(chunk: Pick<ParsedChunk, "phase">): number | null {
   const m = chunk.phase.match(SPLIT_FROM_FIX);

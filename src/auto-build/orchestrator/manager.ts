@@ -21,6 +21,7 @@
  * different control plane.
  */
 
+import { nameFinishFixes } from "../finish-gates/fix-chunk.js";
 import { randomBytes } from "node:crypto";
 import { basename } from "node:path";
 import type { ParsedPlan } from "../plan-parser.js";
@@ -277,10 +278,12 @@ function onLoopEvent(orch: ActiveOrchestration, event: LoopEvent): void {
   // must survive the transient sidebar session.
   const line = `[${(event.elapsedMs / 1000).toFixed(1)}s] [chunk ${event.chunkNumber}/${event.totalChunks}] ${event.type}: ${event.message}`;
   logger.info(`[orchestrator] ${orch.opId} ${line}`);
+  // What the owner reads names a finish fix by its title, never by its
+  // 1000-range number (fix-chunk.ts nameFinishFixes); the log keeps numbers.
   broadcastToSession(orch.sessionId, {
     type: "bg_op_progress",
     opId: orch.opId,
-    line,
+    line: forOwner(orch, line),
   });
 }
 
@@ -315,7 +318,7 @@ async function onLoopComplete(orch: ActiveOrchestration, result: LoopResult): Pr
     type: "bg_op_completed",
     opId: orch.opId,
     status: isHalted ? "failed" : "completed",
-    summary: buildSummaryText(orch.liveState, result),
+    summary: forOwner(orch, buildSummaryText(orch.liveState, result)),
     filesChanged: collectChangedFiles(result),
     metadata: buildSummaryMetadata(orch.liveState, result),
   });
@@ -324,6 +327,7 @@ async function onLoopComplete(orch: ActiveOrchestration, result: LoopResult): Pr
   });
   reportBuildToChat({
     sessionId: orch.sessionId, opId: orch.opId, projectDir: orch.projectDir, ledgerWritten,
+    finishFixes: orch.liveState.finish?.fixes ?? [],
     // Every chunk on the base branch: the ones before this run's scope and the
     // ones landed in it, in whatever order (a chunk set aside leaves a gap).
     chunksCommitted: orch.scopeStartIdx + orch.landedChunks.size, totalChunks: orch.liveState.totalChunks,
@@ -333,6 +337,11 @@ async function onLoopComplete(orch: ActiveOrchestration, result: LoopResult): Pr
   });
 
   logger.info(`[orchestrator] ${orch.opId} ${result.status}: chunks=${result.chunksCommitted}/${orch.liveState.totalChunks}`);
+}
+
+/** Build text as the owner reads it: finish fixes by their titles. */
+function forOwner(orch: ActiveOrchestration, text: string): string {
+  return nameFinishFixes(text, orch.liveState.finish?.fixes ?? []);
 }
 
 function onLoopCrash(orch: ActiveOrchestration, err: Error): void {

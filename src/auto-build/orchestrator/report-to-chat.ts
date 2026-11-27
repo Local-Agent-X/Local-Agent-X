@@ -20,6 +20,8 @@
  * them (LEDGER_STEP). The engine first asks it for the entry and writes it
  * (lead-ledger.ts); the notice then only asks it to tell the owner.
  */
+import { nameFinishFixes } from "../finish-gates/fix-chunk.js";
+import type { ParsedChunk } from "../plan-parser.js";
 import { basename } from "node:path";
 import { pushPendingNotification } from "../../ops/pending-notifications.js";
 import { announceEndedOp } from "../../ops/op-report-wake.js";
@@ -38,6 +40,8 @@ export interface BuildEnd {
   openItems?: string[];
   /** The lead's ledger entry for this run is already in spec/ledger.md (lead-ledger.ts). */
   ledgerWritten?: boolean;
+  /** This run's finish fixes, named by title in what the chat reads. */
+  finishFixes?: readonly Pick<ParsedChunk, "number" | "title">[];
 }
 
 /** The ledger step, or what is left of it once the lead's entry is written. */
@@ -88,7 +92,9 @@ export function buildEndNotice(end: BuildEnd): { summary: string; next: string }
 export function reportBuildToChat(end: BuildEnd): void {
   const task = `The build of ${basename(portablePath(end.projectDir))} (run_build_plan)`;
   const status = end.halt ? "failed" : "completed";
-  const notice = buildEndNotice(end);
+  const named = (t: string) => nameFinishFixes(t, end.finishFixes ?? []);
+  const raw = buildEndNotice(end);
+  const notice = { summary: named(raw.summary), next: named(raw.next) };
   pushPendingNotification(end.sessionId, {
     opId: end.opId, status, summary: notice.summary, filesChanged: end.filesChanged, task,
     completedAt: Date.now(), toolJob: { next: notice.next },

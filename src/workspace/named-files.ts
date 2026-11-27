@@ -8,8 +8,10 @@
  * a name alone in a code span after the reply named its folder (2026-11-26: six
  * images listed by name under one `workspace/black-friday-sale/` line). Each is
  * resolved by the resolver the file tools use (resolveAgentPathFrom), kept only when
- * it is an existing file inside the workspace of a type a device shows or opens, and
- * never a credential file the device's tunnel would refuse (device-paths.ts).
+ * it is an existing file of a type a device shows or opens, and never a credential
+ * file the device's tunnel would refuse (device-paths.ts). A file in the workspace
+ * is a /files address; one outside it (a photo in Pictures) a /local-files address,
+ * when the rule for those allows it (server/local-files.ts).
  *
  * The desktop chat links the same text itself (public/js/shared-md.js md()), where
  * the links sit in the sentence; test/named-files-seam.test.ts holds the two to the
@@ -21,6 +23,7 @@ import { workspaceRoot } from "../config.js";
 import { isSensitivePath } from "../data-lineage/index.js";
 import type { TurnFileKind, TurnFileRef } from "../broker-transport/vendor/turn-files.js";
 import { resolveAgentPathFrom } from "./paths.js";
+import { localFileRefusal, localFilesAddress } from "../server/local-files.js";
 
 const IMAGE_EXT = /\.(?:png|jpe?g|gif|webp)$/i;
 const VIDEO_EXT = /\.(?:mp4|webm)$/i;
@@ -63,6 +66,9 @@ export interface NamedFilesOptions {
   workspace?: string;
   /** Whether an absolute path is an existing file; the disk by default. */
   isFile?: (absPath: string) => boolean;
+  /** Whether a device may open a file outside the workspace; by default the one
+   *  rule for that (server/local-files.ts: the agent's read gate and more). */
+  reachesOutside?: (absPath: string) => boolean;
 }
 
 const isFileOnDisk = (absPath: string): boolean => {
@@ -73,20 +79,24 @@ const isFileOnDisk = (absPath: string): boolean => {
 export function filesNamedInReply(reply: string, opts: NamedFilesOptions = {}): TurnFileRef[] {
   const workspace = resolve(opts.workspace ?? workspaceRoot());
   const isFile = opts.isFile ?? isFileOnDisk;
+  const reachesOutside = opts.reachesOutside ?? ((abs: string) => localFileRefusal(abs) === null);
   const found: TurnFileRef[] = [];
   const seen = new Set<string>();
   // The folder the reply named last: a name alone in a code span is a file there.
   const named: { folder: string | null } = { folder: null };
   const take = (abs: string): void => {
     if (abs === workspace) { named.folder = workspace; return; }
-    const address = workspaceFilesAddress(workspace, abs);
-    if (address === undefined) return;
+    const inside = workspaceFilesAddress(workspace, abs);
     if (!NAMED_EXT.test(abs)) {
       if (!/\.[A-Za-z0-9]{1,5}$/.test(abs)) named.folder = abs;
       return;
     }
     named.folder = dirname(abs);
-    if (seen.has(address) || !isFile(abs) || isSensitivePath(relative(workspace, abs))) return;
+    // A file outside the workspace is a device's to open only where the one rule
+    // for that says so (the agent's own read gate, and no credential file).
+    const address = inside ?? (reachesOutside(abs) ? localFilesAddress(abs) : undefined);
+    if (address === undefined || seen.has(address)) return;
+    if (inside !== undefined && (!isFile(abs) || isSensitivePath(relative(workspace, abs)))) return;
     seen.add(address);
     const name = basename(abs);
     found.push({ path: address, name, kind: kindOf(name) });

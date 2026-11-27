@@ -9,8 +9,18 @@ import { DEVICE_HTTP_PREFIXES, isDeviceAllowedPath } from "./device-paths.js";
 describe("device allowlist", () => {
   it("is exactly the reviewed set — widening it requires updating this pin", () => {
     expect([...DEVICE_HTTP_PREFIXES].sort()).toEqual(
-      ["/api/apps", "/api/code-folders", "/api/providers", "/api/sessions", "/api/workspace/browse", "/apps/", "/files/", "/images/", "/uploads/", "/videos/", "/api/voices/setup/call-system", "/api/collab", "/api/sync/device", "/api/connectors/", "/api/human-check/"].sort(),
+      ["/api/apps", "/api/code-folders", "/api/providers", "/api/sessions", "/api/workspace/browse", "/apps/", "/files/", "/local-files/", "/images/", "/uploads/", "/videos/", "/api/voices/setup/call-system", "/api/collab", "/api/sync/device", "/api/connectors/", "/api/human-check/"].sort(),
     );
+  });
+
+  // A file outside the workspace (owner's call, 2026-11-26): the path is checked
+  // here for credential files, as /files is; server/local-files.ts decides the rest.
+  it("lets a local file through and refuses a credential file or a malformed path", () => {
+    expect(isDeviceAllowedPath("/local-files/" + encodeURIComponent("C:\\Users\\me\\Pictures\\photo.png"))).toBe(true);
+    expect(isDeviceAllowedPath("/local-files/" + encodeURIComponent("C:\\Users\\me\\.ssh\\id_ed25519"))).toBe(false);
+    expect(isDeviceAllowedPath("/local-files/" + encodeURIComponent("C:\\Users\\me\\project\\.env"))).toBe(false);
+    expect(isDeviceAllowedPath("/local-files/%E0%A4%A")).toBe(false);
+    expect(isDeviceAllowedPath("/local-files/")).toBe(false);
   });
 
   it("allows the served-media prefixes the phone renders from", () => {

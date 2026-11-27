@@ -12,6 +12,11 @@
 // paired phone already reaches further than this (it drives the agent, which
 // reads the workspace, and Live Screen drives the desktop). Credential files are
 // still refused here, so a phone never pulls a key or .env out of the workspace.
+// /local-files (a file outside the workspace a reply named: a photo in Pictures)
+// is in since 2026-11-26, by the owner's call: the agent the phone drives already
+// reads and moves those files. It reaches exactly what the agent's own read gate
+// allows under the File Access setting, never a credential file, and only a
+// document, picture, media file or zip (server/local-files.ts decides each one).
 // /api/workspace/browse lists a workspace folder for the phone's file explorer;
 // it lists no credential file and follows no link out (routes/workspace-files.ts).
 // /api/code-folders lists the code-session folders and adds one (routes/agents/
@@ -45,16 +50,21 @@
 // The broker phone is NOT an operator: nothing else on the operator API is in.
 
 import { isSensitivePath } from "../data-lineage/index.js";
+import { LOCAL_FILES_PREFIX } from "../server/local-files.js";
 
 /** Endpoints the broker http-tunnel may proxy to loopback. */
-export const DEVICE_HTTP_PREFIXES = ["/api/apps", "/apps/", "/api/sessions", "/api/providers", "/uploads/", "/videos/", "/images/", "/files/", "/api/workspace/browse", "/api/code-folders", "/api/voices/setup/call-system", "/api/collab", "/api/sync/device", "/api/connectors/", "/api/human-check/"];
+export const DEVICE_HTTP_PREFIXES = ["/api/apps", "/apps/", "/api/sessions", "/api/providers", "/uploads/", "/videos/", "/images/", "/files/", LOCAL_FILES_PREFIX, "/api/workspace/browse", "/api/code-folders", "/api/voices/setup/call-system", "/api/collab", "/api/sync/device", "/api/connectors/", "/api/human-check/"];
+
+/** The prefixes that name a file by its path, whose path is checked here too. */
+const FILE_PATH_PREFIXES = ["/files/", LOCAL_FILES_PREFIX];
 
 export function isDeviceAllowedPath(pathname: string): boolean {
   if (!DEVICE_HTTP_PREFIXES.some((p) => pathname === p || pathname.startsWith(p))) return false;
-  if (!pathname.startsWith("/files/")) return true;
+  const prefix = FILE_PATH_PREFIXES.find((p) => pathname.startsWith(p));
+  if (prefix === undefined) return true;
   let rel: string;
   try {
-    rel = decodeURIComponent(pathname.slice("/files/".length));
+    rel = decodeURIComponent(pathname.slice(prefix.length));
   } catch {
     return false; // malformed escape: not a path anyone can name
   }

@@ -17,7 +17,8 @@ for (const file of [
 writeFileSync(join(base, "outside.png"), "x");
 afterAll(() => rmSync(base, { recursive: true, force: true }));
 
-const named = (reply: string) => filesNamedInReply(reply, { workspace });
+// Outside the workspace the rule is the user's File Access setting; pinned here.
+const named = (reply: string, reachesOutside = (_: string) => false) => filesNamedInReply(reply, { workspace, reachesOutside });
 const paths = (reply: string) => named(reply).map((f) => f.path);
 
 // Live 2026-11-26: a reply said the images were in `workspace/black-friday-sale/`,
@@ -51,6 +52,14 @@ describe("filesNamedInReply", () => {
 
   it("names each file once", () => {
     expect(paths("`workspace/promo/teaser.mp4`, again `workspace/promo/teaser.mp4`")).toEqual(["/files/promo/teaser.mp4"]);
+  });
+
+  it("gives a file outside the workspace its /local-files address when a device may open it", () => {
+    const outside = join(base, "outside.png");
+    expect(named(`\`${outside}\``, () => true)).toEqual([
+      { path: "/local-files/" + encodeURIComponent(outside), name: "outside.png", kind: "image" },
+    ]);
+    expect(named(`\`${outside}\``, () => false)).toEqual([]);
   });
 
   it("finds none in a reply that names no file", () => {

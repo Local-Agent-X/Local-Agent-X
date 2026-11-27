@@ -119,7 +119,7 @@
     },
     "turn-files.ts": {
       "upstream": "packages/protocol/src/turn-files.ts",
-      "sha256": "11cef20fe573cd812e32793d0b9032c9846caf43bab380e5b7c47c32f00354be"
+      "sha256": "2d66558d5775688da9c1e8e88ef539354c77d4e1f16625dcdde306e24a061d51"
     }
   }
 }

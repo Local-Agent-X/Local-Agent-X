@@ -13,14 +13,14 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 74 top-level dirs · 74 live · 0 with no live importer · 2202 non-test source files · 59 oversized · 277 nearing the size cap.
+**Totals:** 74 top-level dirs · 74 live · 0 with no live importer · 2203 non-test source files · 59 oversized · 277 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | Oversized |
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 196 | 32 | XL | 1 |
-| `src/security/` | 173 | 67 | XL | 2 |
+| `src/security/` | 174 | 67 | XL | 2 |
 | `src/tools/` | 151 | 269 | XL | 6 |
 | `src/tool-execution/` | 109 | 93 | XL | 2 |
 | `src/workspace/` | 102 | 4 | M |  |
@@ -29,7 +29,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/providers/` | 80 | 28 | L | 1 |
 | `src/session/` | 79 | 15 | L |  |
 | `src/memory/` | 68 | 164 | XL | 1 |
-| `src/data-lineage/` | 63 | 12 | L |  |
+| `src/data-lineage/` | 64 | 12 | L |  |
 | `src/agency/` | 55 | 41 | XL |  |
 | `src/browser/` | 55 | 95 | XL | 5 |
 | `src/chat-ws/` | 53 | 24 | L |  |
@@ -47,8 +47,8 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/classifiers/` | 26 | 18 | L |  |
 | `src/desktop-contract/` | 24 | 11 | M |  |
 | `src/sandbox/` | 24 | 17 | L |  |
+| `src/server/` *(entrypoint)* | 23 | 81 | XL | 3 |
 | `src/protocols/` | 22 | 51 | XL |  |
-| `src/server/` *(entrypoint)* | 21 | 80 | XL | 3 |
 | `src/voice/` | 20 | 80 | XL | 1 |
 | `src/autonomy/` | 19 | 6 | M |  |
 | `src/net/` | 19 | 12 | L |  |

@@ -9,6 +9,7 @@ import { verifyAgentFileSignature, verifyServedMediaSignature } from "./agent-fi
 import type { LAXConfig } from "../types.js";
 import { UI_PAGE_PERMISSIONS_POLICY } from "./app-serving-policy.js";
 import { serveDocumentView } from "./document-view.js";
+import { LOCAL_FILES_PREFIX, serveLocalFile } from "./local-files.js";
 
 const UPLOAD_CONTENT_TYPES: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", svg: "image/svg+xml", bmp: "image/bmp", pdf: "application/pdf", txt: "text/plain", json: "application/json", csv: "text/csv", md: "text/markdown", rtf: "application/rtf", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", doc: "application/msword", xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", xls: "application/vnd.ms-excel", pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation", ppt: "application/vnd.ms-powerpoint" };
 const MEDIA_CONTENT_TYPES: Record<string, string> = { mp4: "video/mp4", webm: "video/webm", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", svg: "image/svg+xml" };
@@ -29,7 +30,7 @@ const AGENT_FILE_SVG_CSP = `sandbox; script-src 'none'; ${AGENT_FILE_FRAMING}`;
 export function serveProtectedAssets(method: string, url: URL, req: IncomingMessage, res: ServerResponse, config: LAXConfig, dataDir: string): boolean {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
   if (method !== "GET") return false;
-  if (!["/uploads/", "/videos/", "/images/", "/brands/"].some(route => url.pathname.startsWith(route))) return false;
+  if (!["/uploads/", "/videos/", "/images/", "/brands/", LOCAL_FILES_PREFIX].some(route => url.pathname.startsWith(route))) return false;
 
   const authorization = req.headers.authorization || "";
   const provided = (authorization.startsWith("Bearer ") ? authorization.slice(7) : "") || url.searchParams.get("token") || "";
@@ -55,6 +56,13 @@ export function serveProtectedAssets(method: string, url: URL, req: IncomingMess
     res.writeHead(200, headers); res.end(readFileSync(file)); return true;
   }
   if (url.pathname.startsWith("/brands/")) { serveBrandFile(url, req, res, dataDir); return true; }
+  // A file outside the workspace, for the operator only: a signed link names a
+  // served media file, never this.
+  if (url.pathname.startsWith(LOCAL_FILES_PREFIX)) {
+    if (!operatorOk) { json(401, { error: "Authentication required" }); return true; }
+    serveLocalFile(url, req, res);
+    return true;
+  }
   for (const [prefix, subdir] of [["/videos/", "videos"], ["/images/", "images"]] as const) {
     if (url.pathname.startsWith(prefix)) {
       const file = confineToDir(resolve(config.workspace, subdir), url.pathname.replace(prefix, ""));

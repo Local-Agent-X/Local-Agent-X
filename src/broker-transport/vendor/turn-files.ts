@@ -11,8 +11,13 @@ import { asRecord, asString } from "./guards.js";
 export type TurnFileKind = "image" | "video" | "file";
 const KINDS: readonly string[] = ["image", "video", "file"];
 
+/** The addresses a desktop serves a named file at: /files/<path> for one in its
+ *  workspace (each segment URI-encoded), /local-files/<the full path, URI-encoded> for
+ *  one elsewhere on the computer that the device may open (LAX server/local-files.ts). */
+const FILE_ADDRESS = /^\/(?:files|local-files)\/./;
+
 export type TurnFileRef = {
-  /** The file's /files/<path> address, each segment URI-encoded. */
+  /** Where the device fetches it, through its tunnel (FILE_ADDRESS). */
   path: string;
   name: string;
   kind: TurnFileKind;
@@ -22,7 +27,7 @@ function parseRef(raw: unknown): TurnFileRef | null {
   const r = asRecord(raw);
   const path = asString(r?.path);
   const name = asString(r?.name);
-  if (path === null || name === null || !path.startsWith("/files/")) return null;
+  if (path === null || name === null || !FILE_ADDRESS.test(path)) return null;
   const kind = asString(r?.kind);
   return { path, name, kind: kind !== null && KINDS.includes(kind) ? (kind as TurnFileKind) : "file" };
 }

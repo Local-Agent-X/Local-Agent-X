@@ -6,7 +6,6 @@ import { getApprovalManager } from "../approval-manager.js";
 import { classifyToolRisk } from "../autonomy/risk.js";
 import type { ServerEvent } from "../types.js";
 import { writeOp } from "../ops/op-store.js";
-import { buildWorkerSendGate } from "./build-worker-send-gate.js";
 import type { Op } from "../ops/types.js";
 
 // Guard: these tests assume a stable risk mapping. If the classifier changes,
@@ -178,10 +177,10 @@ describe("requireApprovalPhase — unattended runs", () => {
     expect(ctx.result).toBeUndefined();
   });
 
-  // The owner's ruling, 2026-11-26: a build's chunk worker holds every tool
-  // its lead could. What must not come with them is the lead's autonomy to
-  // act as the owner toward the outside.
-  it("a build worker's send waits for the owner even when it inherited an Autonomous profile; its other calls do not", async () => {
+  // The owner's ruling, 2026-11-27: "I shouldn't have to approve cards on an
+  // autonomous build." A build's chunk worker acts under the chat's autonomy
+  // like any other call; the rule that held its sends for the owner is gone.
+  it("a build worker's send runs under an Autonomous chat like any other call", async () => {
     const parent = pinned("Autonomous");
     const child = `agent-builder-${++_sid}`;
     sessions.push(child);
@@ -197,23 +196,9 @@ describe("requireApprovalPhase — unattended runs", () => {
         routing: { lane: "agent", workRoot: "/work/root", buildWorker: true }, secrets: { allowed: [] },
       },
     } as unknown as Op);
-
     const send = Object.assign(makeCtx({ name: "email_send", sessionId: child, callContext: "delegated", args: { to: "someone@example.com", subject: "s", body: "b" } }), { operationId: opId });
-    buildWorkerSendGate(send);
-    const outcome = await requireApprovalPhase(send);
-    expect(outcome.kind).not.toBe("continue");
-    expect(send.allowed).toBe(false);
-    expect(String(send.result?.content)).toContain("a build worker's send or publish waits for the owner");
-
-    // The same worker reading a file is not asked about.
-    const read = Object.assign(makeCtx({ name: "read", sessionId: child, callContext: "delegated", args: { path: "a.txt" } }), { operationId: opId });
-    buildWorkerSendGate(read);
-    expect((await requireApprovalPhase(read)).kind).toBe("continue");
-
-    // The same send from an agent that is not a build worker is not held by this rule.
-    const other = makeCtx({ name: "email_send", sessionId: child, callContext: "delegated", args: { to: "someone@example.com", subject: "s", body: "b" } });
-    buildWorkerSendGate(other);
-    expect(other.policyApprovalReason).toBeUndefined();
+    expect((await requireApprovalPhase(send)).kind).toBe("continue");
+    expect(send.policyApprovalReason).toBeUndefined();
   });
 
   it("honors a per-job Autonomous profile so ask-tier tools run unattended", async () => {

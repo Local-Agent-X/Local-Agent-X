@@ -140,7 +140,8 @@ const DISCIPLINE_BLOCK =
   `- **More tools are one search away.** You start with files, the shell and the web. \`tool_search\` loads the rest ` +
   `when the work needs it: the phone or emulator (\`android\`), a browser, an API (\`http_request\`), office files, and ` +
   `\`process_start\` for a dev server or anything else that must keep running. Use \`process_start\`, never \`&\` in the ` +
-  `shell: what it starts is stopped for you when you finish. A send or a publish waits for the owner.\n` +
+  `shell: what it starts is stopped for you when you finish. To look at the app you are building, open its local ` +
+  `address (localhost) in the browser.\n` +
   `- **Missing third-party credentials are never blockers.** If a service key/URL isn't configured ` +
   `(Supabase, Stripe, etc.): put clearly-fake placeholder values in the framework's local env file ` +
   `(e.g. .env.local), make client construction tolerate them — build and dev boot must succeed ` +

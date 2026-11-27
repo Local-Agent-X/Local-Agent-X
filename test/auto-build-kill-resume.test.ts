@@ -28,7 +28,7 @@ import { describe, it, expect, vi, beforeAll } from "vitest";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 
 vi.hoisted(() => {
   // The loop's own environment probe has its suite; the cage's account cannot read a temp repo.
@@ -102,7 +102,8 @@ const PLAN_CHUNKS = [1, 2, 3];
 interface Shape { plan: string; maxConcurrentChunks?: number }
 const SERIAL: Shape = { plan: PLAN };
 const PARALLEL: Shape = { plan: WIDE_PLAN, maxConcurrentChunks: 2 };
-const sh = (dir: string, cmd: string) => execSync(`git ${cmd}`, { cwd: dir, stdio: ["ignore", "pipe", "pipe"] }).toString().trim();
+// No shell: `--format=%(refname:short)` is a syntax error under /bin/sh.
+const sh = (dir: string, cmd: string) => execFileSync("git", cmd.split(" "), { cwd: dir, stdio: ["ignore", "pipe", "pipe"] }).toString().trim();
 
 function newProject(shape: Shape = SERIAL): string {
   const dir = mkdtempSync(join(tmpdir(), "lax-kill-resume-"));

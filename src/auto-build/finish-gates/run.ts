@@ -250,7 +250,7 @@ async function buildRound(input: FinishInput, progress: FinishProgress): Promise
       maxChunks: undefined, landedChunks: [], maxConcurrentChunks: 1, skipWallProbe: true, finishGates: false,
       onChunkSettled: (n) => {
         if (!progress.done.includes(n)) progress.done.push(n);
-        opts.onFinishProgress?.({ ...progress, fixes: [...progress.fixes], done: [...progress.done], open: [...progress.open] });
+        saveFinishProgress(opts, progress, progress.open);
         opts.onChunkSettled?.(n);
       },
     });
@@ -260,11 +260,16 @@ async function buildRound(input: FinishInput, progress: FinishProgress): Promise
     const split = rest.length === 0 ? splitPartsToBuild(opts.planPath, progress, landed) : [];
     if (split.length > 0) {
       progress.fixes.push(...split);
-      opts.onFinishProgress?.({ ...progress, fixes: [...progress.fixes], done: [...progress.done], open: [...progress.open] });
+      saveFinishProgress(opts, progress, progress.open);
     }
     batch = rest.length > 0 ? rest : split;
   }
   return { committed, halted, notStarted };
+}
+
+/** Hand the build the finish checks' progress to keep, stamped with when. */
+function saveFinishProgress(opts: FinishInput["opts"], progress: FinishProgress, open: string[]): void {
+  opts.onFinishProgress?.({ ...progress, fixes: [...progress.fixes], done: [...progress.done], open: [...open], savedAt: new Date().toISOString() });
 }
 
 export async function runFinishGates(input: FinishInput): Promise<LoopResult> {
@@ -279,7 +284,7 @@ export async function runFinishGates(input: FinishInput): Promise<LoopResult> {
   let prev: RoundFinding | null = null;
   const open: string[] = [...(saved?.open ?? [])];
   let fixRounds = saved?.fixRounds ?? MAX_FIX_ROUNDS;
-  const deadline = finishDeadline(opts.projectDir, saved?.deadline);
+  const deadline = finishDeadline(opts.projectDir, saved?.deadline, Date.now(), saved?.savedAt);
   say(`finish checks: they may take until ${deadline} (as long as building the app took, at least ${spanOf(MIN_FINISH_MS)})`);
   for (let round = saved?.round ?? 1; round <= fixRounds + 1; round++) {
     if (opts.signal?.aborted) break;
@@ -299,7 +304,7 @@ export async function runFinishGates(input: FinishInput): Promise<LoopResult> {
       fixRounds = found.fixRounds;
       progress = { round, fixRounds, runBase, fixes: found.fixes, done: [], open, deadline };
     }
-    opts.onFinishProgress?.({ ...progress, fixes: [...progress.fixes], done: [...progress.done], open: [...open] });
+    saveFinishProgress(opts, progress, open);
     const built = await buildRound(input, progress);
     chunksCommitted += built.committed;
     for (const reason of built.halted) open.push(`finish fix round ${round} did not fully land: ${reason}`);

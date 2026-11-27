@@ -280,6 +280,25 @@ describe("the finish checks' time limit", () => {
     expect(finishDeadline(fresh, "2026-11-27T03:00:00.000Z", now)).toBe("2026-11-27T03:00:00.000Z");
   });
 
+  // label-check-grok, 2026-11-27: paused an hour into its finish checks, it came
+  // back to "their time is up" and ended without checking the app again.
+  it("time the build spent stopped does not count: a resume moves the limit on by it", () => {
+    const fresh = mkdtempSync(join(tmpdir(), "lax-finish-time-"));
+    const resumed = Date.parse("2026-11-27T16:04:49.000Z");
+    // Set to end at 15:57:36, saved at 14:57:36 as the pause came, resumed at 16:04:49.
+    expect(finishDeadline(fresh, "2026-11-27T15:57:36.000Z", resumed, "2026-11-27T14:57:36.000Z")).toBe("2026-11-27T17:04:49.000Z");
+    // A saved time later than now (a clock moved back) never takes time away.
+    expect(finishDeadline(fresh, "2026-11-27T15:57:36.000Z", resumed, "2026-11-27T18:00:00.000Z")).toBe("2026-11-27T15:57:36.000Z");
+  });
+
+  it("each save of the progress says when it was made", async () => {
+    const saves: FinishProgress[] = [];
+    const h = harness([{ suite: { failed: [], unjudged: [] }, found: breakers([["high", "x"]], [], [], []) }, { suite: { failed: [], unjudged: [] }, found: [] }]);
+    await run(h, opts({ onFinishProgress: (p: FinishProgress) => { saves.push(p); } }));
+    expect(saves.length).toBeGreaterThan(0);
+    for (const p of saves) expect(Date.parse(p.savedAt ?? "")).not.toBeNaN();
+  });
+
   it("once it is up, no fix chunk is started, and what they would have fixed goes on the owner's list", async () => {
     const h = harness([{ suite: { failed: [], unjudged: [] }, found: [] }]);
     const fix = (n: number): ParsedChunk => ({ ...chunk(n), title: `Finish fix 1: f${n}`, phase: "Finish", klass: "trunk", slice: `fix ${n}` });

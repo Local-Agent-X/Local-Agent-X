@@ -71,6 +71,9 @@ export interface FinishProgress {
   open: string[];
   /** When the finish checks stop starting new work (time-limit.ts). */
   deadline?: string;
+  /** When this progress was saved: a resume moves the deadline on by the
+   *  time since, which the build spent stopped (time-limit.ts). */
+  savedAt?: string;
 }
 
 /**

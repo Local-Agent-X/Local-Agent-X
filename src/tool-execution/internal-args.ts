@@ -92,9 +92,11 @@ export function userMessageIdOf(args: Args): string | undefined {
   return text(args._userMessageId);
 }
 
-/** The last exchange before a self_edit, for its intent gate. */
-export function lastTurnOf(args: Args): { user: string; assistant: string } {
-  return { user: text(args._lastUserMessage) ?? "", assistant: text(args._lastAssistantMessage) ?? "" };
+/** The last exchange before a call: self_edit's intent gate reads it, and
+ *  op_submit_async reads what the assistant said before the user's last
+ *  message (`asked`), the question a short "yes" answers. */
+export function lastTurnOf(args: Args): { user: string; assistant: string; asked: string } {
+  return { user: text(args._lastUserMessage) ?? "", assistant: text(args._lastAssistantMessage) ?? "", asked: text(args._previousAssistantMessage) ?? "" };
 }
 
 /** The provider and model the chat turn runs on, for a build that should use

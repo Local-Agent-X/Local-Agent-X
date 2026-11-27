@@ -93,7 +93,7 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyRow> = {
   // op_id kills THIS session's newest op. op_wait/op_submit block the chat
   // turn, so the MCP supervisor never sees them.
   op_submit:         { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["delegation"], timeoutMs: 0, reads: ["session", "operation"], hiddenFrom: { mcp: "it is op_submit_async + op_wait in one call, so it blocks the chat turn the same way" }, pathArgs: [{ arg: "context_files", action: "read" }] },
-  op_submit_async:   { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["delegation", "voice-fast"], timeoutMs: 0, reads: ["session", "operation"], pathArgs: [{ arg: "context_files", action: "read" }] },
+  op_submit_async:   { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["delegation", "voice-fast"], timeoutMs: 0, reads: ["session", "operation", "lastTurn"], pathArgs: [{ arg: "context_files", action: "read" }] },
   op_submit_batch:   { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["delegation"], reads: ["session", "operation"], pathArgs: [{ arg: "tasks", each: "context_files", action: "read" }] },
   // op_wait enforces its own timeout_ms and has a graceful "op keeps running,
   // call op_status" branch; a harness timeout would make that unreachable.

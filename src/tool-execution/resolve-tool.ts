@@ -98,6 +98,25 @@ export function withoutRepeatNote(result: string): string {
   return rest;
 }
 
+/**
+ * The last exchange before a call, as the stamps a `lastTurn` tool reads
+ * (internal-args.ts lastTurnOf): the last user message, the last assistant
+ * text, and what the assistant said just before that user message, the
+ * question a short "yes" answers (op_submit_async's casual-reply guard).
+ */
+export function lastExchangeArgs(priorMessages: ReadonlyArray<{ role?: string; content?: unknown }>): Record<string, string> {
+  const out: Record<string, string> = {};
+  const isText = (m: { role?: string; content?: unknown } | undefined, role: string) => m?.role === role && typeof m.content === "string" && m.content.trim() !== "";
+  const reversed = [...priorMessages].reverse();
+  const userAt = reversed.findIndex((m) => isText(m, "user"));
+  const lastAssistant = reversed.find((m) => isText(m, "assistant"));
+  if (userAt >= 0) out._lastUserMessage = String(reversed[userAt].content);
+  if (lastAssistant) out._lastAssistantMessage = String(lastAssistant.content);
+  const asked = userAt >= 0 ? reversed.slice(userAt + 1).find((m) => isText(m, "assistant")) : undefined;
+  if (asked) out._previousAssistantMessage = String(asked.content);
+  return out;
+}
+
 export function findPriorIdenticalResult(
   tc: { id?: string; name: string; arguments: string },
   priorMessages: ChatCompletionMessageParam[],
@@ -215,13 +234,7 @@ async function injectSessionState(ctx: ToolCallContext): Promise<PhaseOutcome> {
 
   // The last exchange, for a tool that sanity-checks its task against the
   // user's intent (self_edit's intent gate).
-  if (reads("lastTurn") && Array.isArray(priorMessages)) {
-    const reversed = [...priorMessages].reverse();
-    const lastUser = reversed.find(m => m?.role === "user" && typeof m.content === "string");
-    const lastAssistant = reversed.find(m => m?.role === "assistant" && typeof m.content === "string");
-    if (lastUser?.content) args._lastUserMessage = String(lastUser.content);
-    if (lastAssistant?.content) args._lastAssistantMessage = String(lastAssistant.content);
-  }
+  if (reads("lastTurn") && Array.isArray(priorMessages)) Object.assign(args, lastExchangeArgs(priorMessages));
 
   // Autopilot: anchor a cwd-reading call (bash, self_edit) at the run's
   // checkout and enforce the per-shift self_edit ceiling.

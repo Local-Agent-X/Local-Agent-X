@@ -7,6 +7,7 @@
  * prevent the model from spawning duplicate workers on retry storms.
  */
 
+import { lastTurnOf } from "../../tool-execution/internal-args.js";
 import type { ToolDefinition } from "../../types.js";
 import { sessionIdOf } from "../../tool-execution/internal-args.js";
 import {
@@ -25,6 +26,11 @@ import {
   tasksNearDuplicate,
 } from "./shared.js";
 import { WorkRootRefused } from "./work-root.js";
+
+/** The assistant ended its message on a question to the user. */
+export function answersAQuestion(asked: string): boolean {
+  return /\?\s*(?:["'”*_)\]]*\s*)?$/.test(asked.trim().slice(-400)) || /\?\s*\n/.test(asked.trim().slice(-400));
+}
 
 export const opSubmitAsyncTool: ToolDefinition = {
   name: "op_submit_async",
@@ -113,7 +119,11 @@ export const opSubmitAsyncTool: ToolDefinition = {
       // task-similarity check misses (different phrasing, same intent).
       const { findRecentCompletionMatching, findAnyRecentCompletion } = await import("../pending-notifications.js");
       const { isLastMessageCasual } = await import("../idle-nudge.js");
-      if (isLastMessageCasual(sessionId)) {
+      // A short "yes" to a question the agent just asked ("May I queue one
+      // build?") is the user's go-ahead, not small talk: blocked as an ack, it
+      // made the agent ask the owner to type the request out word for word
+      // (Label Check Sol, 2026-11-27).
+      if (isLastMessageCasual(sessionId) && !answersAQuestion(lastTurnOf(args).asked)) {
         const anyRecent = findAnyRecentCompletion(sessionId);
         if (anyRecent) {
           const ageMin = Math.round((Date.now() - anyRecent.completedAt) / 60000);

@@ -76,7 +76,7 @@ beforeEach(() => {
   Object.assign(g, load<object>("chat-file-changes.js", "{ fileChangesOf, renderFileChangesCard, changesNoticeCovers }"));
   Object.assign(g, load<object>("chat-cards.js", "{ cardsOf, renderChatCards }"));
   Object.assign(g, load<object>("chat-progress.js", "{ isProgressTool, planOf, wrapUpOf, renderPlanList, renderWrapUp, sessionOffersOf, renderSessionOffer, renderReplyClose }"));
-  Object.assign(g, load<object>("chat-turn-flow.js", "{ isSegmentBreak, toolSegmentsOf, renderTurnNow, formatElapsed }"));
+  Object.assign(g, load<object>("chat-turn-flow.js", "{ isSegmentBreak, toolSegmentsOf, renderTurnNow, activitySummaryOf, turnTokenEstimate, formatElapsed }"));
   artifacts = load<Artifacts>("chat-render-artifacts.js", "{ _renderAssistantToolArtifacts }");
   openState = load<OpenState>("chat-render-open-state.js", "{ captureActivityScroll, restoreActivityScroll }");
 });

@@ -461,12 +461,44 @@ body.platform-darwin #sidebar-agents-controls{top:3px;right:14px}
 .delete-notice.in-activity.restored{border-left-color:var(--ok)}
 .delete-notice.in-activity .delete-notice-undo{padding:1px 8px;font-size:.72rem}
 .still-working{margin:2px 0 8px;font-size:.74rem;font-style:italic;color:var(--muted)}
-/* A running reply's last line: the call in flight and how long it has run
-   (chat-turn-flow.js). */
+/* A running reply's status line: the call in flight (or Thinking / Writing),
+   the turn's time and its tokens so far (chat-turn-flow.js). */
 .turn-now{display:flex;align-items:center;gap:8px;margin:10px 0 2px;font-size:.78rem;color:var(--muted)}
 .turn-now::before{content:'';width:8px;height:8px;border-radius:50%;background:var(--accent);animation:turn-now-pulse 1.4s ease-in-out infinite;flex:none}
 .turn-now-what{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
-.turn-now-elapsed{font-variant-numeric:tabular-nums;flex:none}
+.turn-now-what::after{content:'…'}
+/* "(15s of 2m 11s · ↓ ~1.5k tokens)" right after the action. */
+.turn-now-meta{flex:none;font-variant-numeric:tabular-nums;opacity:.85}
+.turn-now-meta::before{content:'('}
+.turn-now-meta::after{content:')'}
+.turn-now-call:not(:empty){margin-right:.3em}
+.turn-now-tokens::before{content:' · '}
+.turn-now.opens-group{cursor:pointer}
+.turn-now.opens-group:hover .turn-now-what,.turn-now.opens-group:focus-visible .turn-now-what{color:var(--text);text-decoration:underline;text-underline-offset:3px}
+.turn-now.opens-group:focus-visible{outline:1px solid var(--accent);outline-offset:2px;border-radius:4px}
+/* The status line says Writing; the text cursor under it would be a second, misplaced signal. */
+.msg-body.streaming:has(> .turn-now)::after{display:none}
+/* A stretch of tool calls: one line of text that opens to its calls
+   (chat-tool-cards.js ensureActivityGroup), not a box. */
+.activity-group{margin:6px 0}
+.activity-group-header{display:inline-flex;align-items:center;gap:6px;max-width:100%;padding:2px 0;font-size:.8rem;color:var(--muted);cursor:pointer;user-select:none;border-radius:4px}
+.activity-group-header:hover .activity-label,.activity-group-header:focus-visible .activity-label{color:var(--text);text-decoration:underline;text-underline-offset:3px}
+.activity-group-header:focus-visible{outline:1px solid var(--accent);outline-offset:2px}
+.activity-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.activity-count{display:none}
+.activity-chevron{display:inline-block;transition:transform .15s;font-size:.9rem;line-height:1}
+.activity-group.open .activity-chevron{transform:rotate(90deg)}
+.activity-tick{display:none;font-size:.75rem}
+.activity-group.running .activity-tick{display:inline-block;color:var(--accent)}
+/* The action in flight is named once, on the reply's status line; here only
+   the "new actions" badge shows, in an open group, when there is one. */
+.activity-latest{display:none;align-items:center;gap:6px;padding:0 0 2px 18px;font-size:.74rem;color:var(--muted)}
+.activity-group.open .activity-latest:has(.activity-unseen:not([style*="none"])){display:flex}
+.activity-latest-text{display:none}
+.activity-unseen{padding:0 6px;border:1px solid var(--border);border-radius:999px;cursor:pointer;white-space:nowrap}
+.activity-group-body{max-height:320px;overflow-y:auto;margin:2px 0 4px 6px;padding-left:10px;border-left:1px solid var(--border)}
+.activity-group:not(.open) .activity-group-body{display:none}
+@media (prefers-reduced-motion: reduce){.activity-chevron{transition:none}}
 @keyframes turn-now-pulse{0%,100%{opacity:.35}50%{opacity:1}}
 @media (prefers-reduced-motion: reduce){.turn-now::before{animation:none}}
 /* Where a stretch's tool calls go between the text around them; empty until

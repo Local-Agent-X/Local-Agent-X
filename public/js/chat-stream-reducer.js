@@ -114,6 +114,34 @@
     };
   }
 
+  // Clear what the previous turn left on this entry, as startTurn does.
+  function wipeTurnScratch(e, B) {
+    e.content = '';
+    e.reasoning = '';
+    // Mirror startTurn: the replacement turn stamps its text frames from
+    // its own sequence, which starts over. Without this reset the mark
+    // left by the turn being replaced would swallow the new turn's
+    // opening frames.
+    e.lastTextSeq = -1;
+    e.toolsSinceText = false;
+    e.toolEvents = [];
+    e.chips = [];
+    e.progressByTool = {};
+    e.approvals = [];
+    e.notices = [];
+    e.stopNote = null;
+    e.abortReason = null;
+    B.resetBlocks(e);
+  }
+
+  // When the turn began, for the status line's clock (chat-turn-flow.js): the
+  // server's time when chat_op_started carries it, so a page opened mid-turn
+  // shows the turn's real age; else now, for a turn this entry had not begun.
+  function noteTurnStart(e, event, now, takeover) {
+    if (event.opId && event.opId === e.opId && typeof event.startedAt === 'number') e.turnStartedMs = event.startedAt;
+    else if (e.status === 'idle' || e.status === 'done' || takeover || !e.turnStartedMs) e.turnStartedMs = now;
+  }
+
   window._chatStreamReduce = function(e, event, now, helpers) {
     const B = window._ChatBlocks;
     switch (event.type) {
@@ -178,23 +206,9 @@
           // fires this wipe BEFORE the runs refill content — a genuinely new
           // op, nothing lost. Page reload: the entry is fresh ('idle'), the
           // wipe doesn't fire, the replay lands untouched either way.
-          e.content = '';
-          e.reasoning = '';
-          // Mirror startTurn: the replacement turn stamps its text frames from
-          // its own sequence, which starts over. Without this reset the mark
-          // left by the turn being replaced would swallow the new turn's
-          // opening frames.
-          e.lastTextSeq = -1;
-          e.toolsSinceText = false;
-          e.toolEvents = [];
-          e.chips = [];
-          e.progressByTool = {};
-          e.approvals = [];
-          e.notices = [];
-          e.stopNote = null;
-          e.abortReason = null;
-          B.resetBlocks(e);
+          wipeTurnScratch(e, B);
         }
+        noteTurnStart(e, event, now, takeover);
         if (e.status === 'idle' || e.status === 'done') e.status = 'streaming';
         e.lastActivityMs = now;
         break;

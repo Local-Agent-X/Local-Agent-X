@@ -46,7 +46,7 @@ beforeEach(() => {
   Object.assign(g, load<object>("chat-cards.js", "{ cardsOf, renderChatCards }"));
   Object.assign(g, load<object>("chat-render-notices.js", "{ renderDeleteNotice, renderChangesNotice, renderReviewNotice, renderLearningNotice, renderHandoffNotice }"));
   Object.assign(g, load<object>("chat-progress.js", "{ isProgressTool, renderReplyClose }"));
-  const flow = load<{ formatElapsed: (ms: number) => string }>("chat-turn-flow.js", "{ isSegmentBreak, toolSegmentsOf, renderTurnNow, formatElapsed }");
+  const flow = load<{ formatElapsed: (ms: number) => string }>("chat-turn-flow.js", "{ isSegmentBreak, toolSegmentsOf, renderTurnNow, activitySummaryOf, turnTokenEstimate, formatElapsed }");
   Object.assign(g, flow);
   formatElapsed = flow.formatElapsed;
   A = load<Artifacts>("chat-render-artifacts.js", "{ renderTimelineBlocks, _renderAssistantToolArtifacts, _buildLiveAssistantInto }");
@@ -96,7 +96,8 @@ describe("tool calls sit between the text they ran between", () => {
     expect(outline(body)).toEqual(["text:Looking at the build.", "thinking", "tools:2", "text:Found it; fixing.", "tools:1", "text:Done."]);
     // Each group counts its own calls: the failure belongs to the second.
     const labels = [...body.querySelectorAll(".activity-label")].map((l) => l.textContent);
-    expect(labels).toEqual(["Agent activity", "Agent activity · 1 failed"]);
+    // Each reads as what it did, in words, not "Agent activity".
+    expect(labels).toEqual(["Ran 1 command, read 1 file", "Edited 1 file · 1 failed"]);
   });
 
   it("only the newest group of a running turn spins; earlier ones are done", () => {
@@ -180,7 +181,7 @@ describe("a running reply says what it is doing now", () => {
     const bubble = A._buildLiveAssistantInto(document.body, store([start("j", "holdout_judge", "t1", { startedMs })]));
     const body = bubble.querySelector(".msg-body") as HTMLElement;
     const now = body.lastElementChild as HTMLElement;
-    expect(now.className).toBe("turn-now");
+    expect(now.classList.contains("turn-now")).toBe(true);
     // A tool with no phrase of its own is named, never shown as raw arguments.
     expect(now.querySelector(".turn-now-what")!.textContent).toBe("Running holdout_judge");
     expect(now.querySelector(".turn-now-elapsed")!.textContent).toBe("6m 12s");
@@ -191,9 +192,44 @@ describe("a running reply says what it is doing now", () => {
     expect(bubble.querySelector(".turn-now-what")!.textContent).toBe("Running: npm test");
   });
 
-  it("no line once every call has ended", () => {
-    const bubble = A._buildLiveAssistantInto(document.body, store([start("j", "bash", "t1", { startedMs: Date.now() }), end("j", "bash")]));
-    expect(bubble.querySelector(".turn-now")).toBeNull();
+  // 2026-11-27: between calls a working reply looked like it was doing nothing.
+  it("between calls the line stays: Writing while text arrives, Thinking once it stops", () => {
+    const writing = A._buildLiveAssistantInto(document.body, store([start("j", "bash", "t1", { startedMs: Date.now() }), end("j", "bash")]));
+    expect(writing.querySelector(".turn-now-what")!.textContent).toBe("Writing");
+    const quiet = { ...store([]), blocks: [text("t1", "Scoring the app."), think("r1", "what next")], lastContentMs: Date.now() };
+    expect(A._buildLiveAssistantInto(document.body, quiet).querySelector(".turn-now-what")!.textContent).toBe("Thinking");
+    const idle = { ...store([]), lastContentMs: Date.now() - 60_000 };
+    expect(A._buildLiveAssistantInto(document.body, idle).querySelector(".turn-now-what")!.textContent).toBe("Thinking");
+  });
+
+  it("the line gives the turn's time and its tokens so far, and a long call its own time", () => {
+    const turnStartedMs = Date.now() - (2 * 60 + 10) * 1000;
+    const s = { ...store([start("b", "bash", "t1", { startedMs: Date.now() - 14_000, args: { command: "npm test" } })]), turnStartedMs, content: "x".repeat(9_000) };
+    const now = A._buildLiveAssistantInto(document.body, s).querySelector(".turn-now") as HTMLElement;
+    expect(now.querySelector(".turn-now-what")!.textContent).toBe("Running: npm test");
+    // Inside one "(14s of 2m 10s · ↓ ~2.3k tokens)" after the action.
+    expect(now.querySelector(".turn-now-meta .turn-now-call")!.textContent).toBe("14s of");
+    expect(now.querySelector(".turn-now-elapsed")!.textContent).toBe("2m 10s");
+    expect(now.querySelector(".turn-now-tokens")!.textContent).toMatch(/^↓ ~2\.3k tokens$/);
+  });
+
+  it("clicking the line while a call runs opens the group the call is in", () => {
+    const s = store([start("a", "grep", "t1", { startedMs: Date.now() }), end("a", "grep"), start("b", "bash", "t1", { startedMs: Date.now(), args: { command: "npm test" } })]);
+    const bubble = A._buildLiveAssistantInto(document.body, s);
+    const group = bubble.querySelector(".activity-group") as HTMLElement;
+    expect(group.classList.contains("running")).toBe(true);
+    expect(group.classList.contains("open")).toBe(false);
+    (bubble.querySelector(".turn-now.opens-group") as HTMLElement).click();
+    expect(group.classList.contains("open")).toBe(true);
+    expect(group.querySelector(".activity-group-header")!.getAttribute("aria-expanded")).toBe("true");
+    // Between calls there is no group to open: the line is not a button.
+    const thinking = A._buildLiveAssistantInto(document.body, { ...store([]), blocks: [think("r1", "hm")] });
+    expect(thinking.querySelector(".turn-now")!.classList.contains("opens-group")).toBe(false);
+  });
+
+  it("a finished reply's paint has no status line", () => {
+    const done = { ...store([start("j", "bash", "t1", { startedMs: Date.now() }), end("j", "bash")]), lastContentMs: 0 };
+    expect(A._buildLiveAssistantInto(document.body, done).querySelector(".turn-now")).toBeNull();
   });
 
   it("a second call of the same tool still running is not handed the first one's end", () => {
@@ -202,6 +238,15 @@ describe("a running reply says what it is doing now", () => {
     ]));
     expect(bubble.querySelector(".turn-now")).toBeTruthy();
     expect(bubble.querySelector(".activity-tick")!.textContent).toBe("⚙");
+  });
+
+  it("a stretch of calls is named by what it did, the kinds in the order they first ran", () => {
+    const say = (g as unknown as { activitySummaryOf: (n: string[]) => string }).activitySummaryOf;
+    expect(say(["read", "grep", "read", "bash", "grep", "grep"])).toBe("Read 2 files, searched 3 times, ran 1 command");
+    expect(say(["edit", "web_fetch", "holdout_judge", "holdout_judge"])).toBe("Edited 1 file, opened 1 web page, used holdout_judge 2 times");
+    // Past two tools with no phrase of their own, the rest are counted.
+    expect(say(["a_tool", "b_tool", "c_tool", "d_tool", "d_tool"])).toBe("Used a_tool, used b_tool, 3 other actions");
+    expect(say([])).toBe("");
   });
 
   it("formats elapsed time for seconds, minutes and hours", () => {
@@ -242,5 +287,8 @@ describe("the reducer stamps each call", () => {
     expect(second.afterBlock).toBe(e.blocks[e.blocks.length - 1].id);
     expect(second.startedMs).toBe(1_000);
     expect(typeof first.startedMs).toBe("number");
+    // The turn's clock starts at the server's time once the op is announced.
+    S.applyEvent("s1", { type: "chat_op_started", opId: "op1", startedAt: 5_000 });
+    expect((S.get("s1") as unknown as { turnStartedMs: number }).turnStartedMs).toBe(5_000);
   });
 });

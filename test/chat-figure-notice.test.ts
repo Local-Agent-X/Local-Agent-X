@@ -73,7 +73,7 @@ describe("drawing it on the reply", () => {
   it("shows the note's text, classed by its status, beside the reply's other notices", () => {
     Object.assign(g, load<object>("chat-render-notices.js", "{ renderFigureNotice, renderDeleteNotice, renderChangesNotice, renderReviewNotice, renderLearningNotice, renderHandoffNotice }"));
     Object.assign(g, load<object>("chat-progress.js", "{ isProgressTool, renderReplyClose }"));
-    Object.assign(g, load<object>("chat-turn-flow.js", "{ isSegmentBreak, toolSegmentsOf, renderTurnNow }"));
+    Object.assign(g, load<object>("chat-turn-flow.js", "{ isSegmentBreak, toolSegmentsOf, renderTurnNow, activitySummaryOf, turnTokenEstimate }"));
     const artifacts = load<{ _renderAssistantToolArtifacts: (b: HTMLElement, d: unknown) => void }>("chat-render-artifacts.js", "{ _renderAssistantToolArtifacts }");
     const body = document.createElement("div");
     artifacts._renderAssistantToolArtifacts(body, { toolEvents: [], notices: [note({ status: "corrected", text: "Corrected 2 figures in report.html after this answer to match their sources." })] });

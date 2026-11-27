@@ -175,9 +175,9 @@ function _buildLiveAssistantInto(parent, store) {
   const blocks = store ? (store.blocks || []) : [];
   const hasBlocks = blocks.some(b => b && (b.type === 'inject' || (b.text || '').trim()));
   // Content-idle mid-turn: suppress the 'streaming' class (that's what draws
-  // the ▍ cursor via .msg-body.streaming::after — no CSS change needed) and
-  // show the rotating thinking indicator under the content instead. Requires
-  // non-empty content: empty turns already get the thinking dots below.
+  // the ▍ cursor via .msg-body.streaming::after) and caption the text as not
+  // final; the status line at the bottom says Thinking. Requires non-empty
+  // content: an empty turn has nothing to caption.
   // The finalize path synthesizes a store WITHOUT lastContentMs, so a
   // terminal paint can never render idle.
   const contentIdle = !!content && isContentIdle(store);
@@ -209,11 +209,10 @@ function _buildLiveAssistantInto(parent, store) {
       w.innerHTML = mdPreviewMode ? md(content) : `<pre class="raw-md">${esc(content)}</pre>`;
       bodyEl.appendChild(w);
       if (reasoning) prependReasoningBlock(bodyEl, reasoning, true);
-    } else {
-      // Pre-delta render: thinking dots so the chat doesn't look frozen
-      // until the first token lands. Mirrors sendMessage's manual bubble.
-      bodyEl.innerHTML = thinkingHTML();
-      if (reasoning) prependReasoningBlock(bodyEl, reasoning, true);
+    } else if (reasoning) {
+      // Pre-delta render: nothing answered yet. The status line below says
+      // the turn is thinking, with its clock running.
+      prependReasoningBlock(bodyEl, reasoning, true);
     }
   }
   // The model wrote something and moved on to tools (a question it chose to
@@ -241,18 +240,30 @@ function _buildLiveAssistantInto(parent, store) {
     notices: store ? (store.notices || []) : [],
     stopNote: store ? store.stopNote : null,
   });
-  // Idle indicator sits UNDER the content + tool artifacts — same .thinking
-  // markup as the turn-start dots, so thinking-phrases.js's shared rotation
-  // timer picks it up (it queries the live document every tick; no start call
-  // needed) and finalizeLiveMessageInPlace's `.msg-body .thinking` sweep
-  // removes it on the terminal paint. No double-append: contentIdle requires
-  // non-empty content, and the pre-delta dots above require empty content.
-  // A call in flight says so instead, with how long it has run
-  // (chat-turn-flow.js): the dots alone read as frozen over a 9-minute call.
-  const nowLine = bodyEl ? renderTurnNow(toolEvents.filter(t => !isProgressTool(t.name))) : null;
+  // The turn's status line, last, under everything (chat-turn-flow.js): the
+  // call in flight with its own time, or Thinking / Writing, then the turn's
+  // time and tokens. It replaces the dots, which read as frozen over a
+  // 9-minute call. A terminal paint's synthesized store has no lastContentMs:
+  // it is not live, and finalizeLiveMessageInPlace sweeps any `.turn-now`.
+  const live = !!(store && store.lastContentMs);
+  const nowLine = bodyEl ? renderTurnNow(toolEvents.filter(t => !isProgressTool(t.name)), live ? {
+    live: true,
+    startedMs: store.turnStartedMs,
+    tokens: turnTokenEstimate(store),
+    writing: !contentIdle && _endsInText(blocks),
+  } : null) : null;
   if (nowLine) bodyEl.appendChild(nowLine);
-  else if (bodyEl && contentIdle) bodyEl.insertAdjacentHTML('beforeend', thinkingHTML());
   return div;
+}
+
+// Is the newest visible block answer text (the turn is writing, not between calls)?
+function _endsInText(blocks) {
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    const b = blocks[i];
+    if (!b || !(b.text || '').trim()) continue;
+    return b.type === 'text';
+  }
+  return false;
 }
 
 // Roll one group's tool status up onto its collapsed "Agent activity" header
@@ -267,8 +278,8 @@ function _updateActivityOutcome(group, starts, ends, live) {
   const blocked = ends.filter(t => t.status === 'blocked').length;
   const label = group.querySelector('.activity-label');
   if (label) {
-    const total = ends.length;
-    let txt = total >= 5 ? `Agent activity — ${total} actions` : 'Agent activity';
+    // What the stretch did, in words (chat-turn-flow.js activitySummaryOf).
+    let txt = activitySummaryOf(starts.map(s => s.name));
     if (failed > 0) txt += ` · ${failed} failed`;
     if (blocked > 0) txt += ` · ${blocked} blocked`;
     label.textContent = txt;
@@ -305,6 +316,9 @@ function _updateActivityLatest(group, starts, ends, live) {
   const newest = starts[starts.length - 1];
   if (!newest) return;
   const running = live && starts.length > ends.length;
+  // The gear and the latest-action line show only while the stretch runs; a
+  // finished one is its summary line alone (CSS keys off .running).
+  group.classList.toggle('running', running);
   const line = group.querySelector('.activity-latest-text');
   if (line) {
     // Trailing same-name run = the ×N the deduped card below the fold is

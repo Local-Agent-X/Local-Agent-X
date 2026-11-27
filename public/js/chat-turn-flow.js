@@ -17,7 +17,15 @@
 // call with no stamp (a row saved before it existed, or a replay, which sends
 // its tool events after the text) goes in the last segment: the old layout.
 //
-// Exposes (global): isSegmentBreak, toolSegmentsOf, renderTurnNow, formatElapsed
+// Each group reads as one line of text, "Read 2 files, searched 3 times, ran 1
+// command ›", that opens to its calls: the owner asked for text you click, not
+// a bordered "Agent activity" bar (2026-11-27). And a running reply ends with
+// one status line for the whole turn, "Running: npm test (14s) · 2m 10s ·
+// ↓ ~2.3k tokens", or Thinking / Writing between calls, so a reply that is
+// working never looks like it is doing nothing.
+//
+// Exposes (global): isSegmentBreak, toolSegmentsOf, renderTurnNow, formatElapsed,
+//   activitySummaryOf, turnTokenEstimate
 // External deps (resolved at call time): toolSummary (chat-tool-cards.js).
 
 // Does this block start a new segment? The same test renderTimelineBlocks uses
@@ -71,36 +79,152 @@ function _runningCall(toolEvents) {
   return null;
 }
 
-// The last line of a running reply: what it is running and for how long. Null
-// when no call is in flight (text is streaming, or the turn-start dots show).
-// The elapsed time ticks without a rebuild (_tickTurnNow below).
-function renderTurnNow(toolEvents) {
+// What kind of work each tool is, for the group's one-line summary. A tool not
+// listed is named as itself ("used holdout_judge").
+const _ACTIVITY_KINDS = [
+  { test: /^(read|document_read|pdf_read|spreadsheet_read|app_read|view_image|read_my_logs|ocr)$/, say: (n) => n === 1 ? 'read 1 file' : `read ${n} files` },
+  { test: /^(grep|glob|structural_search)$/, say: (n) => n === 1 ? 'searched once' : `searched ${n} times` },
+  { test: /^(bash|process_start|process_restart)$/, say: (n) => n === 1 ? 'ran 1 command' : `ran ${n} commands` },
+  { test: /^(edit|multi_edit|edit_lines|write|bulk_replace|delete_file|self_edit)$/, say: (n) => n === 1 ? 'edited 1 file' : `edited ${n} files` },
+  { test: /^(web_search|image_search)$/, say: (n) => n === 1 ? 'searched the web' : `searched the web ${n} times` },
+  { test: /^(web_fetch|http_request|browser|compare_pages)$/, say: (n) => n === 1 ? 'opened 1 web page' : `opened ${n} web pages` },
+  { test: /^(recall|memory_search|memory_save)$/, say: (n) => n === 1 ? 'checked memory' : `checked memory ${n} times` },
+];
+const _MAX_NAMED_OTHERS = 2;
+
+// "Read 2 files, searched 3 times, ran 1 command": one entry per call, named
+// in the order each kind first ran.
+function activitySummaryOf(names) {
+  const parts = new Map(); // kind or tool name → { say, n }
+  for (const name of names || []) {
+    const kind = _ACTIVITY_KINDS.find((k) => k.test.test(name));
+    const key = kind || 'tool:' + name;
+    if (!parts.has(key)) parts.set(key, { say: kind ? kind.say : (n) => n === 1 ? `used ${name}` : `used ${name} ${n} times`, n: 0, other: !kind });
+    parts.get(key).n++;
+  }
+  const phrases = [];
+  let othersNamed = 0;
+  let othersLeft = 0;
+  for (const p of parts.values()) {
+    if (p.other && othersNamed >= _MAX_NAMED_OTHERS) { othersLeft += p.n; continue; }
+    if (p.other) othersNamed++;
+    phrases.push(p.say(p.n));
+  }
+  if (othersLeft > 0) phrases.push(othersLeft === 1 ? '1 other action' : `${othersLeft} other actions`);
+  const line = phrases.join(', ');
+  return line ? line[0].toUpperCase() + line.slice(1) : '';
+}
+
+// What the turn has written so far, in tokens, from what streamed in: the
+// text, the thinking and every call's arguments, at about four characters a
+// token. An estimate (shown with "~"); a model that thinks without streaming
+// it adds nothing until it does.
+function turnTokenEstimate(store) {
+  if (!store) return 0;
+  let chars = (store.content || '').length + (store.reasoning || '').length;
+  for (const t of store.toolEvents || []) {
+    if (t.type !== 'start' || t.args == null) continue;
+    chars += (typeof t.args === 'string' ? t.args : JSON.stringify(t.args)).length;
+  }
+  return Math.round(chars / 4);
+}
+
+function _formatTokens(n) {
+  return n < 1000 ? String(n) : (n / 1000).toFixed(1) + 'k';
+}
+
+// The call's own clock shows once it has run this long.
+const _CALL_CLOCK_AFTER_MS = 5000;
+
+// The last line of a running reply, the one place the action in flight is
+// named: "Running: npm run build… (15s of 2m 11s · ↓ ~1.5k tokens)", or
+// "Thinking… (46s · ↓ ~15 tokens)" between calls. `turn` (the live bubble
+// passes it): { live, startedMs, tokens, writing }. Without it (a caller with
+// only the events), it shows only while a call runs, timed from the call.
+// While a call runs, clicking the line opens the group it belongs to. The
+// clocks tick without a rebuild (_tickTurnNow below).
+function renderTurnNow(toolEvents, turn) {
+  const t = turn || {};
   const call = _runningCall(toolEvents || []);
-  if (!call) return null;
+  if (!call && !t.live) return null;
   const el = document.createElement('div');
   el.className = 'turn-now';
-  const since = typeof call.startedMs === 'number' ? call.startedMs : Date.now();
-  el.dataset.since = String(since);
+  if (call) {
+    el.classList.add('opens-group');
+    el.setAttribute('role', 'button');
+    el.tabIndex = 0;
+    el.title = 'Show the calls';
+    el.addEventListener('click', () => openRunningGroup(el));
+    el.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); openRunningGroup(el); }
+    });
+  }
   const what = document.createElement('span');
   what.className = 'turn-now-what';
-  // toolSummary's own phrase where it has one ("Running: npm test", "Reading
-  // a.ts"); for the rest it prints the raw arguments, so name the tool alone.
-  const summary = toolSummary(call.name, call.args || '');
-  what.textContent = summary.startsWith(call.name + ' ') ? 'Running ' + call.name : summary;
+  if (call) {
+    // toolSummary's own phrase where it has one ("Running: npm test", "Reading
+    // a.ts"); for the rest it prints the raw arguments, so name the tool alone.
+    const summary = toolSummary(call.name, call.args || '');
+    what.textContent = summary.startsWith(call.name + ' ') ? 'Running ' + call.name : summary;
+  } else {
+    what.textContent = t.writing ? 'Writing' : 'Thinking';
+  }
+  const meta = document.createElement('span');
+  meta.className = 'turn-now-meta';
+  const callSince = call && typeof call.startedMs === 'number' ? call.startedMs : Date.now();
+  const turnSince = typeof t.startedMs === 'number' && t.startedMs > 0 ? t.startedMs : null;
+  if (call && turnSince !== null) {
+    const callTime = document.createElement('span');
+    callTime.className = 'turn-now-call';
+    el.dataset.callSince = String(callSince);
+    _setCallClock(callTime, Date.now() - callSince);
+    meta.appendChild(callTime);
+  }
+  const since = turnSince !== null ? turnSince : callSince;
+  el.dataset.since = String(since);
   const time = document.createElement('span');
   time.className = 'turn-now-elapsed';
   time.textContent = formatElapsed(Date.now() - since);
-  el.append(what, time);
+  meta.appendChild(time);
+  if (t.tokens > 0) {
+    const tokens = document.createElement('span');
+    tokens.className = 'turn-now-tokens';
+    tokens.textContent = '↓ ~' + _formatTokens(t.tokens) + ' tokens';
+    meta.appendChild(tokens);
+  }
+  el.append(what, meta);
   return el;
 }
 
-// Once a second, every visible running line's clock. Text only: the bubble
+function _setCallClock(span, ms) {
+  span.textContent = ms >= _CALL_CLOCK_AFTER_MS ? formatElapsed(ms) + ' of' : '';
+}
+
+// The live line was clicked: open the group the running call is in (the
+// newest running one in this reply) and bring it into view. The bubble is
+// rebuilt on every event; its open state carries over (chat-render-open-state.js).
+function openRunningGroup(line) {
+  const body = line && line.closest('.msg-body');
+  if (!body) return;
+  const running = body.querySelectorAll('.activity-group.running');
+  const all = body.querySelectorAll('.activity-group');
+  const group = running[running.length - 1] || all[all.length - 1];
+  if (!group) return;
+  const header = group.querySelector('.activity-group-header');
+  if (!group.classList.contains('open') && header && typeof toggleActivityGroup === 'function') toggleActivityGroup(header);
+  if (typeof group.scrollIntoView === 'function') group.scrollIntoView({ block: 'nearest' });
+}
+if (typeof window !== 'undefined') window.openRunningGroup = openRunningGroup;
+
+// Once a second, every visible running line's clocks. Text only: the bubble
 // itself is rebuilt by its own events, never by this.
 function _tickTurnNow() {
   const now = Date.now();
   document.querySelectorAll('.turn-now[data-since]').forEach((el) => {
     const t = el.querySelector('.turn-now-elapsed');
     if (t) t.textContent = formatElapsed(now - Number(el.dataset.since));
+    const c = el.querySelector('.turn-now-call');
+    if (c && el.dataset.callSince) _setCallClock(c, now - Number(el.dataset.callSince));
   });
 }
 if (typeof window !== 'undefined' && !window._turnNowTicker) window._turnNowTicker = setInterval(_tickTurnNow, 1000);

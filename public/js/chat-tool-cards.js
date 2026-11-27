@@ -169,10 +169,11 @@ function appendToolChip(bodyEl, chip) {
 
 /**
  * Find or create the last activity-group inside this container. Activity
- * groups consolidate ALL consecutive tool calls within one assistant
- * response into a single collapsible block — instead of 15 stacked tool
- * cards flooding the chat, you see "⚙ Agent activity (15)" with a
- * click-to-expand header.
+ * groups consolidate ALL consecutive tool calls of one stretch of a response
+ * into one line of text, "Read 2 files, ran 1 command ›", that opens to the
+ * calls (chat-turn-flow.js writes the words; app.css draws it as text, not a
+ * box). The count is kept, hidden, for the "new actions" badge
+ * (chat-render-open-state.js).
  */
 function ensureActivityGroup(container) {
   const last = container.lastElementChild;
@@ -181,13 +182,12 @@ function ensureActivityGroup(container) {
   }
   const group = document.createElement('div');
   group.className = 'activity-group';
-  group.style.cssText = 'border:1px solid var(--border,#333);border-radius:6px;margin:.4rem 0;overflow:hidden;background:var(--surface-2,rgba(0,0,0,0.15))';
   group.innerHTML =
-    `<div class="activity-group-header" style="cursor:pointer;padding:.4rem .6rem;display:flex;align-items:center;gap:.5rem;font-size:.75rem;color:var(--muted);user-select:none" onclick="this.parentElement.classList.toggle('open');this.querySelector('.activity-chevron').textContent=this.parentElement.classList.contains('open')?'\\u25BC':'\\u25B6'">` +
-      `<span class="activity-tick" style="opacity:.8;display:inline-block">⚙</span>` +
-      `<span class="activity-label" style="flex:1">Agent activity</span>` +
-      `<span class="activity-count" style="font-variant-numeric:tabular-nums">0</span>` +
-      `<span class="activity-chevron">▶</span>` +
+    `<div class="activity-group-header" role="button" tabindex="0" aria-expanded="false" onclick="toggleActivityGroup(this)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleActivityGroup(this)}">` +
+      `<span class="activity-tick">⚙</span>` +
+      `<span class="activity-label">Working</span>` +
+      `<span class="activity-count" data-total="0">0</span>` +
+      `<span class="activity-chevron">›</span>` +
     `</div>` +
     // Status line OUTSIDE the collapsible body, so it survives both a collapsed
     // group and the body's 320px fold. This module owns the MARKUP only; each
@@ -196,18 +196,19 @@ function ensureActivityGroup(container) {
     // the only pass that has the tool END events), the "landed below the fold"
     // badge by chat-render-open-state.js (the only module that knows where the
     // reader is parked). A card append knows neither, so it writes neither.
-    `<div class="activity-latest" style="display:flex;align-items:center;gap:.4rem;padding:0 .6rem .4rem 1.55rem;font-size:.7rem;color:var(--muted)"><span class="activity-latest-text" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1"></span><span class="activity-unseen" style="display:none;padding:0 .35rem;border:1px solid var(--border,#333);border-radius:999px;cursor:pointer;white-space:nowrap"></span></div>` +
-    `<div class="activity-group-body" style="max-height:320px;overflow-y:auto;padding:0 .4rem .4rem"></div>`;
-  const styleId = '_activityGroupCSS';
-  if (!document.getElementById(styleId)) {
-    const s = document.createElement('style');
-    s.id = styleId;
-    s.textContent = '.activity-group:not(.open) .activity-group-body{display:none}';
-    document.head.appendChild(s);
-  }
+    `<div class="activity-latest"><span class="activity-latest-text"></span><span class="activity-unseen" style="display:none"></span></div>` +
+    `<div class="activity-group-body"></div>`;
   container.appendChild(group);
   return group;
 }
+
+/** Open or close a group from its header line. */
+function toggleActivityGroup(header) {
+  const group = header.parentElement;
+  const open = group.classList.toggle('open');
+  header.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+if (typeof window !== 'undefined') window.toggleActivityGroup = toggleActivityGroup;
 
 function appendToolCardGrouped(container, name, args, riskLevel, context) {
   const group = ensureActivityGroup(container);
@@ -245,8 +246,17 @@ function bumpActivityCount(group) {
   const cur = parseInt(countEl.getAttribute('data-total') || '0', 10) + 1;
   countEl.setAttribute('data-total', String(cur));
   countEl.textContent = String(cur);
+  // The same words the full repaint writes (chat-render-artifacts.js), from
+  // the cards: one name per call, a ×N card counting N.
   const label = group.querySelector('.activity-label');
-  if (label) label.textContent = cur >= 5 ? `Agent activity — ${cur} actions` : 'Agent activity';
+  if (label && typeof activitySummaryOf === 'function') {
+    const names = [];
+    for (const card of group.querySelectorAll('.activity-group-body .tool-card')) {
+      const n = parseInt(card.getAttribute('data-call-count') || '1', 10) || 1;
+      for (let i = 0; i < n; i++) names.push(card.getAttribute('data-tool-name') || '');
+    }
+    label.textContent = activitySummaryOf(names);
+  }
 }
 
 function updateToolProgress(container, toolName, message) {

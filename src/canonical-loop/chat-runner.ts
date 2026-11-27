@@ -89,7 +89,7 @@ export async function* runChatViaCanonical(ctx: CanonicalChatContext): AsyncGene
     logger.info(`[chat-runner] submitted op ${op.id} sess=${ctx.sessionId.slice(0, 16)} model=${ctx.prepared.model} tools=${ctx.tools.length} wallClock=${wallClockMs}ms`);
     // Tell the UI the opId immediately so it can track for reconnect /
     // cancel — independent of any HTTP/SSE connection that may drop.
-    pump.push({ type: "chat_op_started", opId: op.id });
+    pump.push({ type: "chat_op_started", opId: op.id, startedAt: Date.now() });
   } catch (e) {
     yield { type: "error", message: `canonical chat submit failed: ${(e as Error).message}` };
     yield { type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } };

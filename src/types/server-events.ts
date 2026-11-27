@@ -257,7 +257,8 @@ export type ServerEvent =
   // retires the superseded op's affordances (stop button, live styling)
   // instead of leaving two turns on screen. Absent on an ordinary start and
   // on emitters that predate takeover.
-  | { type: "chat_op_started"; opId: string; supersedes?: string }
+  /** startedAt: when the turn began (epoch ms), for the chat's status-line clock. */
+  | { type: "chat_op_started"; opId: string; supersedes?: string; startedAt?: number }
   // Pre-model prepare phase progress: the window between accepting the turn
   // and the first model token (context assembly, memory retrieval, tool
   // schema build) where the UI would otherwise show a silent spinner. `step`

@@ -32,8 +32,9 @@ function preserveOpenState(oldNode, fresh) {
       const open = el.dataset.key ? openKeys.has(el.dataset.key) : openIdx.has(i);
       if (!open) return;
       el.classList.add('open');
-      const chev = el.querySelector('.activity-chevron');
-      if (chev) chev.textContent = '▼';
+      // The chevron turns by CSS on .open; the header says it is expanded.
+      const header = el.querySelector('.activity-group-header');
+      if (header) header.setAttribute('aria-expanded', 'true');
     });
   }
   // Reasoning blocks are native <details> keyed per block. The BUILD decides

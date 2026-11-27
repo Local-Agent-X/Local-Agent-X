@@ -112,6 +112,10 @@
       // (chat-render-artifacts.js) keys off this; lastActivityMs stays the
       // watchdog's lane.
       lastContentMs: 0,
+      // When the current turn began: the status line's clock
+      // (chat-turn-flow.js). The server's time when chat_op_started carries
+      // it, so a page opened mid-turn shows the turn's real age.
+      turnStartedMs: 0,
       status: 'idle',
       abortReason: null,
       sidebarActive: false,
@@ -212,6 +216,7 @@
     e.opId = null;
     e.lastActivityMs = Date.now();
     e.lastContentMs = Date.now();
+    e.turnStartedMs = Date.now();
     e.status = 'streaming';
     e.abortReason = null;
     e.liveAnchorIndex = typeof anchorIdx === 'number' ? anchorIdx : -1;

@@ -31,7 +31,7 @@ beforeEach(() => {
 	Object.assign(g, load<object>("chat-declassify-action.js", "{ isKernelBlockNotice, renderKernelBlockNotice }"));
 	Object.assign(g, load<object>("chat-file-changes.js", "{ fileChangesOf, renderFileChangesCard, changesNoticeCovers }"));
 	Object.assign(g, load<object>("chat-progress.js", "{ isProgressTool, renderReplyClose }"));
-	Object.assign(g, load<object>("chat-turn-flow.js", "{ isSegmentBreak, toolSegmentsOf, renderTurnNow, formatElapsed }"));
+	Object.assign(g, load<object>("chat-turn-flow.js", "{ isSegmentBreak, toolSegmentsOf, renderTurnNow, activitySummaryOf, turnTokenEstimate, formatElapsed }"));
 	artifacts = load<Artifacts>("chat-render-artifacts.js", "{ _buildLiveAssistantInto }");
 });
 

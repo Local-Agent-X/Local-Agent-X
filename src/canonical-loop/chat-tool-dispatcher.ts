@@ -33,7 +33,7 @@ import { enqueueBridgeMedia } from "../bridge-media-queue.js";
 import { createLogger } from "../logger.js";
 import type { CallContext } from "../tool-execution/context.js";
 import { augmentByName, augmentFromToolSearch, canCallByName } from "./tool-augmentation.js";
-import { rememberSessionTools } from "../agent-request/prepare-request/tool-selection.js";
+import { rememberSessionTools } from "../agent-request/prepare-request/session-tool-memory.js";
 import { noteUnavailableTools } from "./unavailable-tool-hint.js";
 import { elapsedMs, monotonicNow } from "./elapsed.js";
 

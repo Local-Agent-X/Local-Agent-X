@@ -10,7 +10,6 @@ public/js/chat-stream-reducer.js#window._chatStreamReduce 166
 public/js/chat-voice-mic.js#startVoiceMode 139
 public/js/chat-voice-ws-handler.js#handleVoiceWsMessage 158
 src/agent-request/prepare-request.ts#prepareAgentRequest 101
-src/agent-request/prepare-request/tool-selection.ts#selectTools 108
 src/agent-request/resolve-provider.ts#resolveProvider 109
 src/agent-store/template-defaults.ts#builtInTemplateDefaults 170
 src/anthropic-client/stream-api.ts#streamViaAPI 157

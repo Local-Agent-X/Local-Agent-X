@@ -1,5 +1,6 @@
 import { beforeEach, describe, it, expect } from "vitest";
-import { _resetSessionToolsForTests, rememberSessionTools, selectTools } from "./tool-selection.js";
+import { selectTools } from "./tool-selection.js";
+import { _resetSessionToolsForTests, rememberSessionTools } from "./session-tool-memory.js";
 import { buildDeferredToolManifest } from "../../tools/tool-prompt-builder.js";
 import { applyAudiences } from "../../tools/audience-map.js";
 import type { ToolDefinition } from "../../types.js";

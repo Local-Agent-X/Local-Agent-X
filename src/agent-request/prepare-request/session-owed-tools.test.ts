@@ -10,7 +10,8 @@ import type { ToolDefinition } from "../../types.js";
 process.env.LAX_DATA_DIR = mkdtempSync(join(tmpdir(), "lax-owed-tools-"));
 
 const { oweSessionTool, owedToolNamesFor } = await import("./session-owed-tools.js");
-const { _resetSessionToolsForTests, selectTools } = await import("./tool-selection.js");
+const { selectTools } = await import("./tool-selection.js");
+const { _resetSessionToolsForTests } = await import("./session-tool-memory.js");
 const { _setToolRAGForTests } = await import("../../tools/tool-rag.js");
 const { applyAudiences } = await import("../../tools/audience-map.js");
 const kits = await import("../../tools/tool-kits.js");

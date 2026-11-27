@@ -15,8 +15,8 @@ import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 
 // A tool loaded mid-request joins the session's set as it loads.
 const { rememberSessionTools } = vi.hoisted(() => ({ rememberSessionTools: vi.fn() }));
-vi.mock("../agent-request/prepare-request/tool-selection.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../agent-request/prepare-request/tool-selection.js")>();
+vi.mock("../agent-request/prepare-request/session-tool-memory.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../agent-request/prepare-request/session-tool-memory.js")>();
   return { ...actual, rememberSessionTools: (...a: Parameters<typeof actual.rememberSessionTools>) => { rememberSessionTools(...a); actual.rememberSessionTools(...a); } };
 });
 import { makeChatToolDispatcher } from "./chat-tool-dispatcher.js";

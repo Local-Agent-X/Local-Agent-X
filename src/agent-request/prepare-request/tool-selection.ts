@@ -24,6 +24,7 @@ import {
 } from "./product-build-routing.js";
 import { deviceToolNamesFor } from "./device-tools.js";
 import { owedToolNamesFor } from "./session-owed-tools.js";
+import { inSessionOrder, rememberSessionTools, sessionToolsOf } from "./session-tool-memory.js";
 
 const logger = createLogger("agent-request.prepare-request.tools");
 
@@ -101,34 +102,13 @@ export function stripInlineBuildTools(
   return kept;
 }
 
-// Tool names each session has already shipped. The tools array is the FIRST
-// block of the prompt-cache prefix, so a per-message re-pick that drops or adds
-// one tool invalidates tools + system + history for that request (measured:
-// 34 of 46 full cache misses on quick chat follow-ups coincided with a changed
-// tool set). Strong models get the session's union instead: the set only grows,
-// so consecutive messages send byte-identical tools until a new one is needed.
-const SESSION_TOOLS_MAX_SESSIONS = 500;
-const sessionToolNames = new Map<string, Set<string>>();
-
-/** Union `names` into the session's shipped-tool set. Called with each
- *  selection and with the op's final tool list (which includes tools the
- *  model loaded mid-op via tool_search). */
-export function rememberSessionTools(sessionId: string, names: Iterable<string>): void {
-  if (!sessionId) return;
-  let known = sessionToolNames.get(sessionId);
-  if (!known) {
-    if (sessionToolNames.size >= SESSION_TOOLS_MAX_SESSIONS) {
-      sessionToolNames.delete(sessionToolNames.keys().next().value as string);
-    }
-    known = new Set();
-    sessionToolNames.set(sessionId, known);
-  }
-  for (const name of names) known.add(name);
-}
-
-export function _resetSessionToolsForTests(): void {
-  sessionToolNames.clear();
-}
+// Tool names each session has already shipped, in its own order and kept on
+// disk (session-tool-memory.ts). The tools array is part of the prompt-cache
+// prefix, so a per-message re-pick that drops or adds one tool invalidates the
+// request after it (measured: 34 of 46 full cache misses on quick chat
+// follow-ups coincided with a changed tool set). Strong models get the
+// session's union instead: the set only grows, so consecutive messages send
+// byte-identical tools until a new one is needed.
 
 /**
  * A code session's tools (session/mode.ts): the code session kit, not the
@@ -141,15 +121,86 @@ async function codeSessionTools(input: ToolSelectionInput, tier: Tier): Promise<
   const { selectTools: selectKit, CODE_SESSION_KIT } = await import("../../tools/tool-kits.js");
   const { shrinkToolsForTier } = await import("../../tools/tier-tool-set.js");
   const { withUndoCounterparts } = await import("../../tools/undo-pairs.js");
-  const names = new Set([...selectKit(CODE_SESSION_KIT), ...(sessionToolNames.get(input.sessionId) ?? []), ...deviceToolNamesFor(input.sessionId), ...owedToolNamesFor(input.sessionId)]);
+  const names = new Set([...selectKit(CODE_SESSION_KIT), ...(sessionToolsOf(input.sessionId) ?? []), ...deviceToolNamesFor(input.sessionId), ...owedToolNamesFor(input.sessionId)]);
   let tools = withUndoCounterparts(input.allAgentTools.filter((t) => names.has(t.name)), input.allAgentTools);
   // Compaction only, at the set's own size. Handing it the catalog made it
   // fill the set from the tier's essentials instead: a local model's code
   // session got browser, self_edit and memory in place of grep, glob and the
   // task tools (Terminal-Bench smoke, 2026-10-24).
   if (tier !== "strong") tools = shrinkToolsForTier(tools, tier, undefined, tools.length);
+  tools = inSessionOrder(input.sessionId, tools);
   rememberSessionTools(input.sessionId, tools.map((t) => t.name));
   logger.info(`[tools] code session: ${tools.length} for ${tier} model ${input.resolvedModel} (${tools.map((t) => t.name).join(",")})`);
+  return tools;
+}
+
+/** The message's picks joined with the session's tools, compacted, ordered as
+ *  the session sent them and remembered: what goes on the wire (selectTools). */
+async function withSessionUnion(input: ToolSelectionInput, picked: ToolDefinition[], tier: Tier, shrinkTier: Tier | null): Promise<ToolDefinition[]> {
+  const { shrinkToolsForTier } = await import("../../tools/tier-tool-set.js");
+  let tools = picked;
+  // The session's union: the set only grows, so consecutive messages send
+  // byte-identical tools until a new one is needed. Strong models always;
+  // a local model when its profile routes tools per mission (EXP-12: on the
+  // local wire the tool schemas render after the system text, so a set that
+  // changes 74→75→74 across messages re-prefilled the whole prompt at every
+  // arrival — 30-37k tokens, measured). Re-derived in catalog order on
+  // EVERY message, the session's first included, so the same set serializes
+  // identically: the first message's set came out in the shrink's order and
+  // the second's in catalog order, so on qwen3.8 (2026-11-02) two identical
+  // 34-tool sets differed at token ~9.4k and the second message re-read its
+  // whole 37k-token prompt.
+  const { modelToolRouting } = await import("../../local-runtimes/model-profile.js");
+  const sticky = tier === "strong" || modelToolRouting(input.resolvedModel, { provider: input.resolvedProvider, tier }) === "mission";
+  const known = sticky ? sessionToolsOf(input.sessionId) : undefined;
+  // A phone app's session always has the device tools (device-tools.ts),
+  // and any session the tools something is waiting on it to call
+  // (session-owed-tools.ts).
+  const union = new Set([...(known ?? []), ...tools.map(t => t.name), ...deviceToolNamesFor(input.sessionId), ...owedToolNamesFor(input.sessionId)]);
+  tools = input.allAgentTools.filter(t => union.has(t.name));
+  // The tier's DESCRIPTION compaction at the final set's own size, so every
+  // pick survives (711f2cd6). Applied after the union so the bytes are a
+  // function of the set alone.
+  //
+  // This deliberately does NOT enforce the tier's tool COUNT, and that
+  // is a measured decision, not an oversight. EXP-7 through 7d
+  // (2026-09-21, docs/harness/HARNESS_LOG.md) enforced it four ways.
+  // It cut input tokens 62% on qwen3:8b and 34% on qwen3.6:27b — and
+  // cost the 8B 3-8 cases in every variant (20/63 -> 14, 17, 15, 12) and
+  // failed the 27B's unsafe_action gate in all three runs that measured
+  // it (0 -> 2, 1, 2): a capped set kept a guessable `delete_file`
+  // reachable and lost the product-specific `restore_file`. The saving is
+  // real; nothing here can yet choose WHICH few tools a message needs.
+  // EXP-18's invariant, after every step that can add or drop a tool: a set
+  // never carries a destructive tool without the tool that undoes it. EXP-7
+  // failed the gate on exactly this — a capped set kept delete_file and lost
+  // restore_file. Cheap, and it runs for every tier so "catalog" membership
+  // cannot regress into the same shape either.
+  const { withUndoCounterparts } = await import("../../tools/undo-pairs.js");
+  tools = withUndoCounterparts(tools, input.allAgentTools);
+  if (shrinkTier) tools = shrinkToolsForTier(tools, shrinkTier, input.allAgentTools, tools.length);
+  // A nudge that names a tool the model does not have is dead text (the
+  // tier-tool-set header records exactly that failure for tool_search). Put
+  // `protocol` in the schema whenever the prompt will say to call it —
+  // AFTER the shrink, because the shrink refills from the essential list
+  // and evicts any non-essential pick on the weak tier — and keep it for
+  // the rest of a mission-routed session: the nudge is per message, the
+  // need it answers is not, and dropping the tool on the next turn would
+  // cost a second re-prefill for nothing. The session memory below records
+  // it like any other pick; the shrink would evict it again next turn, so
+  // the guard reads the memory too.
+  const wantsProtocol = !!input.protocolSuggestion || (sticky && !!known?.has("protocol"));
+  if (wantsProtocol && !tools.some((t) => t.name === "protocol")) {
+    const protocolTool = input.allAgentTools.find((t) => t.name === "protocol");
+    // Same tier compaction the shrink gave every other tool in the set.
+    if (protocolTool) tools = [...tools, ...(tier === "strong" ? [protocolTool] : shrinkToolsForTier([protocolTool], tier))];
+  }
+  tools = inSessionOrder(input.sessionId, tools);
+  rememberSessionTools(input.sessionId, tools.map(t => t.name));
+  // What actually ships. The "Shrunk a→b" line above is the pre-union tier
+  // set; for two months it read as the wire count while 65–77 tools went
+  // out. This is the number to trust.
+  logger.info(`[tools] on the wire: ${tools.length} for ${tier} model ${input.resolvedModel} (${tools.map(t => t.name).join(",")})`);
   return tools;
 }
 
@@ -275,67 +326,7 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
     } catch (e) {
       logger.warn(`[tool-rag] Skipped: ${(e as Error).message}`);
     }
-    // The session's union: the set only grows, so consecutive messages send
-    // byte-identical tools until a new one is needed. Strong models always;
-    // a local model when its profile routes tools per mission (EXP-12: on the
-    // local wire the tool schemas render after the system text, so a set that
-    // changes 74→75→74 across messages re-prefilled the whole prompt at every
-    // arrival — 30-37k tokens, measured). Re-derived in catalog order on
-    // EVERY message, the session's first included, so the same set serializes
-    // identically: the first message's set came out in the shrink's order and
-    // the second's in catalog order, so on qwen3.8 (2026-11-02) two identical
-    // 34-tool sets differed at token ~9.4k and the second message re-read its
-    // whole 37k-token prompt.
-    const { modelToolRouting } = await import("../../local-runtimes/model-profile.js");
-    const sticky = tier === "strong" || modelToolRouting(input.resolvedModel, { provider: input.resolvedProvider, tier }) === "mission";
-    const known = sticky ? sessionToolNames.get(input.sessionId) : undefined;
-    // A phone app's session always has the device tools (device-tools.ts),
-    // and any session the tools something is waiting on it to call
-    // (session-owed-tools.ts).
-    const union = new Set([...(known ?? []), ...tools.map(t => t.name), ...deviceToolNamesFor(input.sessionId), ...owedToolNamesFor(input.sessionId)]);
-    tools = input.allAgentTools.filter(t => union.has(t.name));
-    // The tier's DESCRIPTION compaction at the final set's own size, so every
-    // pick survives (711f2cd6). Applied after the union so the bytes are a
-    // function of the set alone.
-    //
-    // This deliberately does NOT enforce the tier's tool COUNT, and that
-    // is a measured decision, not an oversight. EXP-7 through 7d
-    // (2026-09-21, docs/harness/HARNESS_LOG.md) enforced it four ways.
-    // It cut input tokens 62% on qwen3:8b and 34% on qwen3.6:27b — and
-    // cost the 8B 3-8 cases in every variant (20/63 -> 14, 17, 15, 12) and
-    // failed the 27B's unsafe_action gate in all three runs that measured
-    // it (0 -> 2, 1, 2): a capped set kept a guessable `delete_file`
-    // reachable and lost the product-specific `restore_file`. The saving is
-    // real; nothing here can yet choose WHICH few tools a message needs.
-    // EXP-18's invariant, after every step that can add or drop a tool: a set
-    // never carries a destructive tool without the tool that undoes it. EXP-7
-    // failed the gate on exactly this — a capped set kept delete_file and lost
-    // restore_file. Cheap, and it runs for every tier so "catalog" membership
-    // cannot regress into the same shape either.
-    const { withUndoCounterparts } = await import("../../tools/undo-pairs.js");
-    tools = withUndoCounterparts(tools, input.allAgentTools);
-    if (shrinkTier) tools = shrinkToolsForTier(tools, shrinkTier, input.allAgentTools, tools.length);
-    // A nudge that names a tool the model does not have is dead text (the
-    // tier-tool-set header records exactly that failure for tool_search). Put
-    // `protocol` in the schema whenever the prompt will say to call it —
-    // AFTER the shrink, because the shrink refills from the essential list
-    // and evicts any non-essential pick on the weak tier — and keep it for
-    // the rest of a mission-routed session: the nudge is per message, the
-    // need it answers is not, and dropping the tool on the next turn would
-    // cost a second re-prefill for nothing. The session memory below records
-    // it like any other pick; the shrink would evict it again next turn, so
-    // the guard reads the memory too.
-    const wantsProtocol = !!input.protocolSuggestion || (sticky && !!known?.has("protocol"));
-    if (wantsProtocol && !tools.some((t) => t.name === "protocol")) {
-      const protocolTool = input.allAgentTools.find((t) => t.name === "protocol");
-      // Same tier compaction the shrink gave every other tool in the set.
-      if (protocolTool) tools = [...tools, ...(tier === "strong" ? [protocolTool] : shrinkToolsForTier([protocolTool], tier))];
-    }
-    rememberSessionTools(input.sessionId, tools.map(t => t.name));
-    // What actually ships. The "Shrunk a→b" line above is the pre-union tier
-    // set; for two months it read as the wire count while 65–77 tools went
-    // out. This is the number to trust.
-    logger.info(`[tools] on the wire: ${tools.length} for ${tier} model ${input.resolvedModel} (${tools.map(t => t.name).join(",")})`);
+    tools = await withSessionUnion(input, tools, tier, shrinkTier);
   }
 
   // Provider-aware tool cap — LAST, after RAG re-inflation. Tool capacity is a

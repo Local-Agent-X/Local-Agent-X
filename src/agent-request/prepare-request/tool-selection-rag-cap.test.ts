@@ -23,7 +23,8 @@
  * cap. These tests pin the pieces that are right regardless.
  */
 import { beforeEach, afterEach, describe, it, expect } from "vitest";
-import { _resetSessionToolsForTests, selectTools } from "./tool-selection.js";
+import { selectTools } from "./tool-selection.js";
+import { _resetSessionToolsForTests } from "./session-tool-memory.js";
 import { _setToolRAGForTests } from "../../tools/tool-rag.js";
 import { applyAudiences } from "../../tools/audience-map.js";
 import { ESSENTIAL_TOOLS_ORDER, shrinkToolsForTier } from "../../tools/tier-tool-set.js";

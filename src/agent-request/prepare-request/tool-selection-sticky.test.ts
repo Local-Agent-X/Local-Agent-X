@@ -18,7 +18,8 @@ import type { ToolDefinition } from "../../types.js";
 const data = mkdtempSync(join(tmpdir(), "lax-sticky-tools-"));
 process.env.LAX_DATA_DIR = data;
 
-const { _resetSessionToolsForTests, selectTools } = await import("./tool-selection.js");
+const { selectTools } = await import("./tool-selection.js");
+const { _resetSessionToolsForTests } = await import("./session-tool-memory.js");
 const { _setToolRAGForTests } = await import("../../tools/tool-rag.js");
 const { applyAudiences } = await import("../../tools/audience-map.js");
 const { ESSENTIAL_TOOLS_ORDER } = await import("../../tools/tier-tool-set.js");

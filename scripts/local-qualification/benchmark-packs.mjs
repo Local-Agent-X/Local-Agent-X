@@ -154,12 +154,12 @@ const definition = {
       ],
     },
     {
-      schema: QUALIFICATION_BENCHMARK_PACK_SCHEMA, schemaVersion: 1, id: "local-model", version: 4,
+      schema: QUALIFICATION_BENCHMARK_PACK_SCHEMA, schemaVersion: 1, id: "local-model", version: 5,
       gate: { id: "local-model", script: "test:local-product-qualification", timeoutMs: 45 * 60_000, preflightScripts: ["check:release-environment", "test:prepare"] },
       scenarios: [
         { id: "product", version: 2, testPath: "test/local-model-qualification.test.ts", assertionCount: 30, assertionManifestSha256: "sha256:1ca8d088bfc6e7edfcd68a4376d4953e449e332b37068ef0ec857608be5a8a1c", platformIndependent: false, allowedSkips: [] },
         // Refreshed for c7eedccb/9af6b4ae (qualification event grammar/schema work added 3 tests).
-        { id: "evidence", version: 3, testPath: "test/local-model-qualification-evidence.test.ts", assertionCount: 58, assertionManifestSha256: "sha256:cc507d8838a98f6bbc45d1a4d1d53f091817908fcee754815f074cbf11ee5818", platformIndependent: false, allowedSkips: [] },
+        { id: "evidence", version: 4, testPath: "test/local-model-qualification-evidence.test.ts", assertionCount: 64, assertionManifestSha256: "sha256:abb282fbbcfc54d7a941ee71beba0bb125e00b30b1b2ed9ef026da24891b2d19", platformIndependent: false, allowedSkips: [] },
         { id: "isolation", version: 2, testPath: "test/local-model-qualification-isolation.test.ts", assertionCount: 56, assertionManifestSha256: "sha256:d966ad614a634e749fa8d227b744b15c9bf527ef1e1aa47637ad1a03573ad947", platformIndependent: false, allowedSkips: [] },
         { id: "proxy", version: 1, testPath: "test/local-model-qualification-proxy.test.ts", assertionCount: 2, assertionManifestSha256: "sha256:65c91236b3c5495a9f278da063764fe17f05d508906249adaac67abcbee39bb7", platformIndependent: false, allowedSkips: [] },
       ],

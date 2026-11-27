@@ -443,6 +443,11 @@ describe("build-exec gate: command + entry discovery (pure)", () => {
     expect(discoverCommands(dir)).toEqual(["npm run build", "npm test"]);
   });
 
+  it("runs the project's own check script before its build and tests", () => {
+    writeFileSync(join(dir, "package.json"), JSON.stringify({ scripts: { check: "node scripts/check-size.mjs && tsc --noEmit", test: "node --test" } }));
+    expect(discoverCommands(dir)).toEqual(["npm run check", "npm test"]);
+  });
+
   it("returns [] when there's no package.json — nothing to execution-verify", () => {
     expect(discoverCommands(dir)).toEqual([]);
   });

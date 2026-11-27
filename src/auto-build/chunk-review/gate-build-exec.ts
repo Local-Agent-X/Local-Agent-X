@@ -65,7 +65,10 @@ type CommandResult = { outcome: CagedRunOutcome; output: string; outputTail: str
  * Discover what to run: the project's structure check when it carries the kit
  * (src/app-scaffold — a project materialized before any code has no
  * package.json yet, so the check is run directly, not through a script), then
- * `build` and `test` from package.json. Skip cleanly what is absent. Returns
+ * `check`, `build` and `test` from package.json. A project's own `check` is
+ * its rules (size caps, its rails, a type-check): label-check-grok wrote one,
+ * the gate never ran it, and finish fixes left store.ts over the project's
+ * 400-line cap with every review passed (2026-11-27). Skip cleanly what is absent. Returns
  * the ordered command list — empty when there's nothing runnable, in which case
  * the gate no-ops (a project with no build/test can't be execution-verified,
  * and inventing a command would be worse than passing through to the other
@@ -84,6 +87,7 @@ export function discoverCommands(projectDir: string): string[] {
   } catch {
     return commands;
   }
+  if (scripts.check) commands.push("npm run check");
   if (scripts.build) commands.push("npm run build");
   if (scripts.test) commands.push("npm test");
   return commands;

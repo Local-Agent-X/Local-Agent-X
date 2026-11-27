@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 75 top-level dirs · 75 live · 0 with no live importer · 2216 non-test source files · 58 oversized · 277 nearing the size cap.
+**Totals:** 75 top-level dirs · 75 live · 0 with no live importer · 2217 non-test source files · 58 oversized · 277 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -24,7 +24,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/tools/` | 152 | 270 | XL | 6 |
 | `src/tool-execution/` | 109 | 92 | XL | 2 |
 | `src/workspace/` | 102 | 4 | M |  |
-| `src/canonical-loop/` | 98 | 304 | XL | 6 |
+| `src/canonical-loop/` | 99 | 304 | XL | 6 |
 | `src/util/` | 87 | 5 | S |  |
 | `src/providers/` | 80 | 28 | L | 1 |
 | `src/session/` | 79 | 15 | L |  |
@@ -65,7 +65,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/agent-loop/` | 12 | 1 | S |  |
 | `src/app-scaffold/` | 12 | 7 | M |  |
 | `src/ari-kernel/` | 12 | 12 | M |  |
-| `src/auto-build/` | 12 | 88 | XL | 1 |
+| `src/auto-build/` | 12 | 89 | XL | 1 |
 | `src/integrations/` | 12 | 15 | M |  |
 | `src/whatsapp-bridge/` | 11 | 8 | M | 1 |
 | `src/agent-guards/` | 10 | 13 | L |  |
@@ -324,6 +324,7 @@ job. Comments are free: never cut them to fit.
 - `src/memory/tools/facts.ts` — 330+ code lines (cap 350)
 - `src/net/egress-proxy-core.ts` — 330+ code lines (cap 350)
 - `src/update-rollback.ts` — 330+ code lines (cap 350)
+- `src/auto-build/loop/parallel-waves.ts` — 320+ code lines (cap 350)
 - `src/broker-transport/phone-projection.ts` — 320+ code lines (cap 350)
 - `src/browser/layout-report.ts` — 320+ code lines (cap 350)
 - `src/canonical-loop/adapters/tool-call-text-corpus.ts` — 320+ code lines (cap 350)
@@ -333,7 +334,6 @@ job. Comments are free: never cut them to fit.
 - `src/server/background-jobs/index.ts` — 320+ code lines (cap 350)
 - `src/tools/document-tools.ts` — 320+ code lines (cap 350)
 - `src/tools/edit-tools.ts` — 320+ code lines (cap 350)
-- `src/auto-build/loop/parallel-waves.ts` — 310+ code lines (cap 350)
 - `src/auto-build/workflow-resolver.ts` — 310+ code lines (cap 350)
 - `src/browser/manager.ts` — 310+ code lines (cap 350)
 - `src/protocols/index.ts` — 310+ code lines (cap 350)
@@ -383,6 +383,7 @@ job. Comments are free: never cut them to fit.
 - `src/agent-request/prepare-request/tool-selection.ts#selectTools` — 90+ own code lines (cap 100)
 - `src/anthropic-client/stream-cli.ts#streamViaColdSpawn` — 90+ own code lines (cap 100)
 - `src/app-renderer/components.ts#renderComponent` — 90+ own code lines (cap 100)
+- `src/auto-build/loop/parallel-waves.ts#runBatch` — 90+ own code lines (cap 100)
 - `src/auto-build/loop/run-chunk-once.ts#runChunkOnce` — 90+ own code lines (cap 100)
 - `src/auto-build/loop/run.ts#runChunksInOrder` — 90+ own code lines (cap 100)
 - `src/auto-build/orchestrator/manager.ts#startOrchestration` — 90+ own code lines (cap 100)
@@ -427,7 +428,6 @@ job. Comments are free: never cut them to fit.
 - `src/agent-request/prepare-request/build-system-prompt.ts#buildSystemPromptWithTelemetry` — 80+ own code lines (cap 100)
 - `src/agents/tools.ts#createAgentTools` — 80+ own code lines (cap 100)
 - `src/auth/index.ts#createServer:callback` — 80+ own code lines (cap 100)
-- `src/auto-build/loop/parallel-waves.ts#runBatch` — 80+ own code lines (cap 100)
 - `src/canonical-loop/adapters/canonical-to-transport.ts#canonicalToTransport` — 80+ own code lines (cap 100)
 - `src/canonical-loop/agent-runner/runtime-surface.ts#rehydrateAgentRuntimeSurface` — 80+ own code lines (cap 100)
 - `src/canonical-loop/chat-runner/seed-messages.ts#seedOpMessages` — 80+ own code lines (cap 100)

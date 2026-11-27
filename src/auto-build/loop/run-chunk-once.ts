@@ -11,6 +11,7 @@ import { chunkJudgingSummary, type ChunkJudge } from "../chunk-review/chunk-verd
 import { chunkChangedFiles, gitDiffPath } from "../git-helpers.js";
 import type { EmitFn } from "./types.js";
 import { carriedConversation } from "./worker-conversation.js";
+import { modelAccountProblem } from "./model-account.js";
 
 export interface RunChunkOnceOptions {
   chunk: ParsedChunk;
@@ -133,6 +134,8 @@ export function chunkProcessFailureOutcome(
   signalAborted: boolean,
 ): ChunkReviewOutcome | null {
   if (subResult.exitCode === 0) return null;
+  const account = signalAborted ? null : modelAccountProblem(subResult.error);
+  if (account) return { action: "halt", reasoning: account, findings: [{ gate: "model-account", action: "halt", reasoning: account }], report: chunkReportOf(undefined) };
   const aborted = subResult.exitCode === 130 || signalAborted;
   const timedOut = subResult.exitCode === 124;
   // It reported and its run was then marked failed (a guard on its last

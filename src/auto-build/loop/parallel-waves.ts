@@ -75,6 +75,7 @@ import { pickUpSetAsideWork } from "./carry-over.js";
 import { isSetAsideCase, setChunkAsideInTree, stoppedMidChunk } from "./tree-set-aside.js";
 import type { EmitFn, LoopEvent, LoopOptions, LoopResult } from "./types.js";
 import { haltedResult, safeGet } from "./types.js";
+import { modelAccountStop } from "./model-account.js";
 
 export interface ParallelWavesContext {
   opts: LoopOptions;
@@ -280,6 +281,7 @@ async function runBatch(ctx: RunContext, batch: ParsedChunk[], chunksCommittedIn
   // Wrap everything past worktree creation: ANY throw cleans up every worktree
   // this batch created before propagating, else a rejected Promise.all leaks the
   // registry slots (global cap 12) + temp dirs. Normal `return`s clean up precisely.
+  let accountStop: string | null = null;
   try {
     // 2. DISPATCH all worktree chunks CONCURRENTLY — each in its own worktree.
     const built = await Promise.all(dispatched.map(d => buildChunkInWorktree(ctx, d)));
@@ -296,7 +298,9 @@ async function runBatch(ctx: RunContext, batch: ParsedChunk[], chunksCommittedIn
     // A chunk paused at its phase's gate was accepted: it merges like the rest.
     const passed = built.filter(r => r.finalAction === "proceed" || r.finalAction === "amend_spec" || isPhaseGatePause(r.finalOutcome));
     // A chunk the owner's stop cut off did not fail: it is kept to go on from.
-    for (const r of built) if (!passed.includes(r)) (opts.signal?.aborted ? keepStoppedChunk(ctx, r) : setChunkAside(ctx, r));
+    // So is every chunk of a batch whose model account refused the request.
+    accountStop = built.map((r) => modelAccountStop(r.finalOutcome)).find(Boolean) ?? null;
+    for (const r of built) if (!passed.includes(r)) (opts.signal?.aborted || accountStop ? keepStoppedChunk(ctx, r) : setChunkAside(ctx, r));
 
     // 4. Commit each chunk that passed inside its worktree, then MERGE BACK
     //    ONE AT A TIME (rule 1 — strictly sequential).
@@ -352,6 +356,13 @@ async function runBatch(ctx: RunContext, batch: ParsedChunk[], chunksCommittedIn
     // entry) so the slot cap isn't leaked, then rethrow to the crash handler.
     for (const d of dispatched) cleanupWorktreeSafe(d.name);
     throw err;
+  }
+
+  // The model account refused the request: what passed has landed, the rest is
+  // kept, and the build stops here with what to fix (model-account.ts).
+  if (accountStop) {
+    emit({ type: "halt", chunkNumber: batch[0].number, totalChunks, message: accountStop });
+    return { kind: "halt", result: { ...haltedResult(accountStop, batch[0].number, outcomes, events), chunksCommitted } };
   }
 
   // 4b. A chunk that passed its review and then conflicted with what a
@@ -439,6 +450,11 @@ async function buildChunkOnBaseSerial(ctx: RunContext, chunk: ParsedChunk, chunk
 
   outcomes.push({ chunkNumber: chunk.number, outcome: finalOutcome, action: finalAction });
   if (stoppedMidChunk(finalAction, opts.signal)) return { kind: "halt", result: haltedResult("loop aborted by signal", chunk.number, outcomes, events) };
+  const account = modelAccountStop(finalOutcome);
+  if (account) {
+    emit({ type: "halt", chunkNumber: chunk.number, totalChunks, message: account });
+    return { kind: "halt", result: { ...haltedResult(account, chunk.number, outcomes, events), chunksCommitted } };
+  }
   // A phase pause lands like a proceed; the phase is scored once the wave is in.
   const paused = isPhaseGatePause(finalOutcome);
   // Still not green: set aside like a chunk built in a worktree, its work

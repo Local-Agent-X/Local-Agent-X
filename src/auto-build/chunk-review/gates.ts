@@ -29,6 +29,10 @@ export interface GateFinding {
   gate:
     /** The worker's run itself failed: a crash, a timeout, a cancel. */
     | "worker-run"
+    /** The model account the build runs on refused the request: out of
+     *  credits, or not signed in. No retry or other chunk can pass until the
+     *  owner fixes it, so the build stops (loop/model-account.ts). */
+    | "model-account"
     | "done-when"
     | "additive-diff"
     | "phase-gate"

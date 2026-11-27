@@ -19,6 +19,7 @@ import { randomBytes } from "node:crypto";
 import { readFileSync, writeFileSync, existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { runChunkAgent, type ChunkAgentInvocation, type ChunkAgentResult } from "../agents/chunk-runner.js";
+import { modelAccountProblem } from "./model-account.js";
 
 export const PREFLIGHT_FILES = {
   sentinel: ".lax-preflight-sentinel.txt",
@@ -142,6 +143,9 @@ function verdict(result: ChunkAgentResult, token: string, paths: Record<"sentine
     return { status: "fail", contract: "worker-timeout", detail: `worker produced no result within the probe window — provider stall or event plumbing (handler:agent-result) not firing. ${result.error ?? ""}`.trim() };
   }
   if (result.exitCode !== 0) {
+    // Out of credits or not signed in: said as that, before any chunk starts.
+    const account = modelAccountProblem(result.error);
+    if (account) return { status: "fail", contract: "model-account", detail: account };
     return { status: "fail", contract: "worker-invocation", detail: `worker run failed (exit=${result.exitCode}): ${result.error || result.stdout.slice(-400) || "(no output)"}` };
   }
 

@@ -86,6 +86,7 @@ export const defaultChunkJudge: ChunkJudge = async (input) => {
   input.onProgress?.(`skeptic attacking chunk ${input.chunk.number}`);
   const skeptic = await runChunkSkeptic({
     chunk: input.chunk, claim: input.claim, preSha: input.preSha, projectDir: input.projectDir,
+    ...(input.earlierFindings?.length ? { earlierFindings: input.earlierFindings } : {}),
     signal: input.signal, parentSessionId: input.parentSessionId, parentOpId: input.parentOpId,
   });
   return { scenarios, skeptic };

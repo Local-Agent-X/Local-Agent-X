@@ -8,12 +8,13 @@ import type { ChunkReviewOutcome } from "../chunk-review/index.js";
 import type { ParsedChunk, ParsedPlan } from "../plan-parser.js";
 import type { LoopEvent } from "./types.js";
 
-const rebuilds = vi.hoisted(() => ({ outcomes: [] as unknown[], reasons: [] as Array<string | undefined>, wentOnFrom: [] as unknown[] }));
+const rebuilds = vi.hoisted(() => ({ outcomes: [] as unknown[], reasons: [] as Array<string | undefined>, wentOnFrom: [] as unknown[], rechecked: [] as Array<readonly string[] | undefined> }));
 const advisor = vi.hoisted(() => ({ answers: [] as unknown[], asked: [] as string[] }));
 
 vi.mock("./run-chunk-once.js", () => ({
-  runChunkOnce: vi.fn(async (opts: { retryReason?: string; continueFrom?: unknown[]; onTranscript?: (m: unknown[]) => void }) => {
+  runChunkOnce: vi.fn(async (opts: { retryReason?: string; earlierFindings?: readonly string[]; continueFrom?: unknown[]; onTranscript?: (m: unknown[]) => void }) => {
     rebuilds.reasons.push(opts.retryReason);
+    rebuilds.rechecked.push(opts.earlierFindings);
     rebuilds.wentOnFrom.push(opts.continueFrom);
     opts.onTranscript?.([{ role: "assistant", content: `worker of round ${rebuilds.reasons.length}` }]);
     return rebuilds.outcomes.shift();
@@ -48,7 +49,7 @@ const fix = (first: ChunkReviewOutcome) => handlePushBack({
   emit: (e) => { events.push(e); },
 });
 
-beforeEach(() => { rebuilds.outcomes = []; rebuilds.reasons = []; rebuilds.wentOnFrom = []; advisor.answers = []; advisor.asked = []; events = []; lead.answers = []; lead.asked = 0; lead.finals = 0; });
+beforeEach(() => { rebuilds.outcomes = []; rebuilds.reasons = []; rebuilds.wentOnFrom = []; rebuilds.rechecked = []; advisor.answers = []; advisor.asked = []; events = []; lead.answers = []; lead.asked = 0; lead.finals = 0; });
 
 describe("handlePushBack", () => {
   it("a round that comes back clean ends it", async () => {
@@ -72,6 +73,12 @@ describe("handlePushBack", () => {
     expect(rebuilds.reasons[1]).toContain("misses the hyphenated no-risk");
     expect(rebuilds.reasons[1]).toContain("Fixed in earlier rounds; keep them fixed:\n- matches partial words");
     expect(events.some((e) => e.type === "push-back" && e.message.includes("found something else"))).toBe(true);
+    // Each round's review is a recheck of what the chunk was sent back for so
+    // far (skeptic-bar.ts): the first review was the full one.
+    expect(rebuilds.rechecked).toEqual([
+      ["matches partial words"],
+      ["matches partial words", "misses the hyphenated no-risk"],
+    ]);
   });
 
   it("stops when a round changes nothing: the review says the same thing again", async () => {

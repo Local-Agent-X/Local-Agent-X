@@ -90,6 +90,39 @@ export function finishFixLeavesAppNoWorse(ground: string | undefined): boolean {
   return n === "1" || n === "2";
 }
 
+/**
+ * A chunk sent back is rechecked, not attacked again. Every skeptic started
+ * fresh and gave one break, so each fix round closed what it was given and the
+ * next skeptic found something else: 97 of 148 send-backs over four days of
+ * builds, 113 "broken" verdicts to 24 "holds", and as many hours reviewing as
+ * building (2026-11-24 to 27). The first review is the full review and lists
+ * every break it finds; a later one is held to that list.
+ */
+export const RECHECK_BREAK_GROUNDS: readonly string[] = [
+  "a finding from the earlier reviews still reproduces, as described or with an input of the same kind",
+  "its fix broke something that worked at the last review",
+  "a crash, lost or corrupted data, or a security hole",
+];
+
+/** The section a recheck's instructions carry, with what the chunk was sent back for. */
+export function recheckBlock(earlier: readonly string[]): string {
+  const MAX = 1_200;
+  const list = earlier.map((f, i) => `${i + 1}. ${f.trim().length > MAX ? `${f.trim().slice(0, MAX)}…` : f.trim()}`).join("\n");
+  return (
+    `## This is a recheck\n\n` +
+    `The chunk was reviewed in full before and sent back for these findings:\n\n${list}\n\n` +
+    `Check the fixes, not the whole chunk again. The change is BROKEN only when you show one of:\n` +
+    RECHECK_BREAK_GROUNDS.map((ground, i) => `${i + 1}. ${ground};\n`).join("") +
+    `\nEverything else is a FOLLOW-UP, including a problem the earlier reviews could have found and did not ` +
+    `list. For a broken verdict, start \`ground\` with the number of the ground you showed ("1 — ...").\n\n`
+  );
+}
+
+/** What a first review is told about how many breaks to give. */
+export const LIST_EVERY_BREAK =
+  "This is the chunk's one full review: a later review only rechecks what you list. Keep looking after the " +
+  "first break and give every break you can show, numbered, in `finding`, each with its ground.";
+
 /** The section of the skeptic's instructions that states the bar. */
 export const SKEPTIC_BAR_BLOCK =
   `## What counts as BROKEN\n\n` +

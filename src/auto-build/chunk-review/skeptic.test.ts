@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { FINISH_FIX_BREAK_GROUNDS, SKEPTIC_BAR_BLOCK, SKEPTIC_BREAK_GROUNDS, SKEPTIC_RULE_REACH, finishFixLeavesAppNoWorse } from "./skeptic-bar.js";
+import { FINISH_FIX_BREAK_GROUNDS, RECHECK_BREAK_GROUNDS, SKEPTIC_BAR_BLOCK, SKEPTIC_BREAK_GROUNDS, SKEPTIC_RULE_REACH, finishFixLeavesAppNoWorse } from "./skeptic-bar.js";
 
 type Verdict = { verdict: "holds" | "broken"; ground: string; finding: string; followUps: string[] };
 type AgentResult = { stdout: string; exitCode: number; durationMs: number; error?: string; skepticVerdict?: Verdict };
@@ -90,6 +90,27 @@ describe("buildSkepticTask", () => {
     expect(task).toContain("git diff abc1234");
     expect(task).toMatch(/Prove it wrong/);
     expect(task).toMatch(/beyond the contract is a follow-up, not a break/);
+    // The first review is the full one: every break, not the first it meets.
+    expect(task).toContain("give every break you can show");
+    expect(task).not.toContain("This is a recheck");
+  });
+
+  // Four days of builds, 2026-11-24 to 27: 97 of 148 send-backs were a fix
+  // round that closed what it was given and a fresh skeptic finding something
+  // else. A chunk sent back is rechecked against what it was sent back for.
+  it("a chunk reviewed before is rechecked against its earlier findings, not attacked again", () => {
+    const task = buildSkepticTask({
+      chunk, claim: "STATUS: done", preSha: "abc1234",
+      earlierFindings: ["Breaks: a booked slot disappears\nTwo visitors can book the same slot.", "  "],
+    });
+    expect(task).toContain("## This is a recheck");
+    expect(task).toContain("1. Breaks: a booked slot disappears\nTwo visitors can book the same slot.");
+    // The blank finding is dropped: one finding is listed before the grounds.
+    expect(task.split("Check the fixes")[0]).not.toContain("2. ");
+    for (const ground of RECHECK_BREAK_GROUNDS) expect(task).toContain(ground);
+    expect(task).toContain("including a problem the earlier reviews could have found and did not list");
+    expect(task).not.toContain("give every break you can show");
+    expect(task).toMatch(/Prove it wrong by the recheck grounds/);
   });
 });
 

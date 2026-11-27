@@ -17,6 +17,9 @@ export interface ChunkJudgeInput {
   claim: string;
   /** HEAD before the chunk was built. */
   preSha: string;
+  /** What earlier reviews sent this chunk back for: the skeptic then rechecks
+   *  those, and does not attack the whole chunk again (skeptic-bar.ts). */
+  earlierFindings?: readonly string[];
   /** Every chunk of the plan: a scenario named by several is judged at the
    *  last of them. Absent, the chunk is judged on every scenario it names. */
   allChunks?: ParsedChunk[];

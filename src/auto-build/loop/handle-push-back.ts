@@ -255,6 +255,8 @@ export async function handlePushBack(opts: HandlePushBackOptions): Promise<Handl
       projectDir: opts.projectDir, preSha: opts.preSha,
       subprocessTimeoutMs: opts.subprocessTimeoutMs, signal: opts.signal, emit,
       retryReason: withEarlierFindings(next.retryReason, earlier),
+      // The review of this round rechecks what the chunk was sent back for.
+      earlierFindings: [...earlier, round.outcome.reasoning],
       judgmentHook: opts.judgmentHook,
       parentOpId: opts.parentOpId,
       parentSessionId: opts.parentSessionId,

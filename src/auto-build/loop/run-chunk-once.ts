@@ -22,6 +22,9 @@ export interface RunChunkOnceOptions {
   signal?: AbortSignal;
   emit: EmitFn;
   retryReason?: string;
+  /** What earlier reviews sent this chunk back for: its review is then a
+   *  recheck of those findings (chunk-review/skeptic-bar.ts). */
+  earlierFindings?: readonly string[];
   judgmentHook?: JudgmentHook;
   parentSessionId?: string;
   /** Orchestrator op id — threaded to the chunk worker's spawn as its
@@ -235,6 +238,7 @@ export async function runChunkOnce(opts: RunChunkOnceOptions): Promise<ChunkRevi
     chunkJudge: opts.chunkJudge ? {
       judge: opts.chunkJudge,
       preSha: opts.preSha,
+      ...(opts.earlierFindings?.length ? { earlierFindings: opts.earlierFindings } : {}),
       baseProjectDir: opts.baseProjectDir ?? opts.projectDir,
       workerIndex: opts.workerIndex,
       parentSessionId: opts.parentSessionId,

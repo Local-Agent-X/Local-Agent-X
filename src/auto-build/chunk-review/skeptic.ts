@@ -33,7 +33,7 @@ import { join } from "node:path";
 import { runChunkAgent, SKEPTIC_PROBE_DIR } from "../agents/chunk-runner.js";
 import type { SkepticVerdictCall } from "../agents/agent-report.js";
 import { isFinishFixChunk } from "../finish-gates/fix-chunk.js";
-import { FINISH_FIX_BAR_BLOCK } from "./skeptic-bar.js";
+import { FINISH_FIX_BAR_BLOCK, LIST_EVERY_BREAK, recheckBlock } from "./skeptic-bar.js";
 
 export type SkepticStatus = "broken" | "holds" | "not-run";
 
@@ -55,6 +55,9 @@ export interface SkepticInput {
   claim: string;
   /** HEAD before the chunk was built: `git diff <preSha>` is the chunk. */
   preSha: string;
+  /** What earlier reviews sent this chunk back for. Set, this review is a
+   *  recheck of those findings (skeptic-bar.ts recheckBlock). */
+  earlierFindings?: readonly string[];
   /** The tree the chunk was built in (its worktree on the parallel path). */
   projectDir: string;
   /** How long the skeptic may go silent before it counts as hung (default 15 min). */
@@ -69,8 +72,10 @@ export interface SkepticInput {
 const SKEPTIC_SILENCE_LIMIT_MS = 15 * 60_000;
 const MAX_REPORT_CHARS = 4_000;
 
-export function buildSkepticTask(input: Pick<SkepticInput, "chunk" | "claim" | "preSha">): string {
+export function buildSkepticTask(input: Pick<SkepticInput, "chunk" | "claim" | "preSha" | "earlierFindings">): string {
   const { chunk } = input;
+  const earlier = (input.earlierFindings ?? []).filter((f) => f.trim());
+  const recheck = earlier.length > 0;
   const report = input.claim.trim().slice(-MAX_REPORT_CHARS) || "(the builder made no report)";
   const finishFix = isFinishFixChunk(chunk);
   return (
@@ -80,16 +85,22 @@ export function buildSkepticTask(input: Pick<SkepticInput, "chunk" | "claim" | "
     `Done when:\n${chunk.doneWhen || "(none stated)"}\n\n` +
     `## The builder's claim (its final report)\n\n${report}\n\n` +
     (finishFix ? FINISH_FIX_BAR_BLOCK : "") +
+    (recheck ? recheckBlock(earlier) : "") +
     `## The change\n\n` +
     `The chunk started from commit \`${input.preSha}\`. Its work is everything since: ` +
     `\`git diff ${input.preSha}\` plus any new files \`git status\` lists as untracked.\n\n` +
-    (finishFix
+    (recheck
+      ? `This change says it fixed what the earlier reviews found. Prove it wrong by the recheck grounds ` +
+        `above: the finding that still reproduces, what the fix broke. Anything else you find is a ` +
+        `follow-up, not a break. `
+      : finishFix
       ? `This change says it fixes what it was given. Prove it wrong by the finish-fix bar above: the ` +
         `finding that still reproduces, the test that passes without the fix, what the fix broke. ` +
         `Anything else you find is a follow-up, not a break. `
       : `This change says it is done and correct. Prove it wrong against the contract above and the ` +
         `project's \`spec/\`: the input it breaks on, the case it missed, the seam it forked, the test ` +
         `that cannot fail. What you find beyond the contract is a follow-up, not a break. `) +
+    (recheck ? "" : `${LIST_EVERY_BREAK} `) +
     `End by calling skeptic_verdict.`
   );
 }

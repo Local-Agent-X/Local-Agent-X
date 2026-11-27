@@ -63,6 +63,9 @@ export async function buildChunkWithRetry(a: ChunkAttemptInput): Promise<ChunkAt
   const outcome = await runChunkOnce({
     ...shared,
     retryReason: a.carryOver?.brief,
+    // A chunk picked up from an earlier run was already reviewed: its review
+    // here rechecks what it was sent back for.
+    ...(a.carryOver?.findings?.length ? { earlierFindings: a.carryOver.findings } : {}),
     priorOutcomes: a.priorOutcomes,
     ...(resumed ? { continueFrom: resumed, resumed: true } : {}),
     onTranscript: kept,

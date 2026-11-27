@@ -34,6 +34,7 @@
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { operationIdOf, sessionIdOf } from "../tool-execution/internal-args.js";
 import { opForbidsCapability, planModeForbidsCapability } from "../canonical-loop/public/plan-ledger.js";
+import { narrationPromisesFollowup } from "../canonical-loop/public/follow-up.js";
 import { isInteractiveHostOpType, readOp } from "../ops/op-store.js";
 import { listOpsForSession } from "../ops/session-bridge.js";
 import {
@@ -99,6 +100,27 @@ function openStepsRefusal(sessionId: string, opId: string | undefined): string |
   );
 }
 
+/**
+ * A close whose recap names a next step the agent would take itself, with no
+ * question for the user: refused once per request, so it takes that step or
+ * says what stops it. A GPT chat testing an app on the owner's phone closed
+ * twice in a row on "the next step is to pinpoint why the on-device request
+ * failed", and the owner had to type "?" to get it going (Label Check Sol,
+ * 2026-11-27). The open-steps refusal above only sees a step list, and this
+ * request had none.
+ */
+const nextStepPushed = new Set<string>();
+function namedNextStepRefusal(opId: string | undefined, recap: string): string | null {
+  if (!opId || nextStepPushed.has(opId) || !narrationPromisesFollowup(recap)) return null;
+  nextStepPushed.add(opId);
+  if (nextStepPushed.size > 500) nextStepPushed.delete(nextStepPushed.values().next().value!);
+  return (
+    "Not closed: your recap names a next step you would take yourself. Take it now, in this turn. If something " +
+    "stops you (it needs the user, a device, a decision, or it is out of scope), call wrap_up again and say what in " +
+    "the recap, or ask with `ask`: that call will close the turn."
+  );
+}
+
 export const wrapUpTool: ToolDefinition = {
   name: "wrap_up",
   compactDescription: "End a turn that did work: `recap` is your closing answer; optionally one question with 1-2 answer buttons.",
@@ -125,7 +147,7 @@ export const wrapUpTool: ToolDefinition = {
     const sessionId = (sessionIdOf(args) ?? "").trim();
     const liveWork = sessionId ? liveBackgroundWork(sessionId) : [];
     if (sessionId && !wrapUp.ask && liveWork.length === 0) {
-      const refusal = openStepsRefusal(sessionId, operationIdOf(args));
+      const refusal = openStepsRefusal(sessionId, operationIdOf(args)) ?? namedNextStepRefusal(operationIdOf(args), wrapUp.recap);
       if (refusal) return { content: refusal, isError: true };
     }
     const op = operationIdOf(args) ? readOp(operationIdOf(args)!) : null;

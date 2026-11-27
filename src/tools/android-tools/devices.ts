@@ -8,7 +8,14 @@ import { ok, err } from "../result-helpers.js";
 
 export async function handleListDevices(): Promise<ToolResult> {
   const devices = await listDevices();
-  if (devices.length === 0) return ok("No devices connected. Use 'start_emulator' to boot one.");
+  // A phone over USB drops in and out; telling the agent only to boot an
+  // emulator sent it away from the phone the user was testing on (2026-11-27).
+  if (devices.length === 0) {
+    return ok(
+      "No phone or emulator is connected. If the user is testing on a phone, ask them to reconnect the USB cable with the " +
+      "phone unlocked and tap Allow if it asks about USB debugging, then list devices again. Otherwise, 'start_emulator' boots one.",
+    );
+  }
   const lines = devices.map((d) => `${d.serial}\t${d.state}${d.model ? `\t${d.model}` : ""}`);
   return ok(`Connected devices:\n${lines.join("\n")}`);
 }

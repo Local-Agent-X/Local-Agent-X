@@ -278,3 +278,33 @@ describe("the prompt's step-list guidance", () => {
     expect(promptOf("task_create")).toMatch(/update_plan instead/);
   });
 });
+
+// Label Check Sol, 2026-11-27: a chat closed twice on "the next step is to
+// pinpoint why the on-device request failed", with no step list for the
+// open-steps refusal to see, and the owner typed "?" to get it going.
+describe("wrap_up whose recap names a next step the agent would take", () => {
+  let n = 0;
+  function turn(): { _sessionId: string; _operationId: string } {
+    const id = `op_chat_turn_nextstep_${++n}`;
+    const sessionId = `chat-nextstep-${n}`;
+    writeOp({ ...baseOp(id, OP_TYPE.chatTurn), sessionId, status: "running", createdAt: new Date().toISOString() });
+    return { _sessionId: sessionId, _operationId: id };
+  }
+  const NAMED = "The scan failed on the phone. The next step is to pinpoint why the on-device request failed.";
+
+  it("is refused once, so the agent takes the step or says what stops it; the second close goes through", async () => {
+    const t = turn();
+    const first = await wrapUpTool.execute({ recap: NAMED, ...t });
+    expect(first.isError).toBe(true);
+    expect(first.content).toContain("names a next step you would take yourself");
+    const again = await wrapUpTool.execute({ recap: `${NAMED} I can't: it needs the phone, which is unplugged.`, ...t });
+    expect(again.isError).toBeFalsy();
+  });
+
+  it("is not refused with a question for the user, or when nothing is promised", async () => {
+    const asks = turn();
+    expect((await wrapUpTool.execute({ recap: NAMED, ask: "Look into it now?", actions: ["Yes"], ...asks })).isError).toBeFalsy();
+    const done = turn();
+    expect((await wrapUpTool.execute({ recap: "Installed and launched on the Galaxy. Let me know if you see an error.", ...done })).isError).toBeFalsy();
+  });
+});

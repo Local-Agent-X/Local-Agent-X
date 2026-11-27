@@ -239,6 +239,25 @@ describe("a running reply says what it is doing now", () => {
     expect(group.classList.contains("open")).toBe(true);
   });
 
+  // The owner, 2026-11-27: "what about our little sayings". Between calls the
+  // line wears Agent X's rotating phrases, held steady across rebuilds.
+  it("between calls it says one of the thinking phrases, the same one across rebuilds, and Radio silence when the turn is quiet", () => {
+    const w = window as unknown as Record<string, unknown>;
+    let n = 0;
+    w.thinkingPhrase = () => ["Working the angles", "Tailing the suspect"][n++ % 2];
+    const quiet = { ...store([]), blocks: [text("t1", "Scoring the app."), think("r1", "what next")] };
+    const first = A._buildLiveAssistantInto(document.body, quiet).querySelector(".turn-now-what")!.textContent;
+    const again = A._buildLiveAssistantInto(document.body, quiet).querySelector(".turn-now-what")!.textContent;
+    expect(["Working the angles", "Tailing the suspect"]).toContain(first);
+    expect(again).toBe(first);
+    w.streamActivitySignal = () => ({ state: "silent" });
+    expect(A._buildLiveAssistantInto(document.body, quiet).querySelector(".turn-now-what")!.textContent).toBe("Radio silence");
+    // A running call is still named as the call.
+    expect(A._buildLiveAssistantInto(document.body, store([start("b", "bash", "t1", { startedMs: Date.now(), args: { command: "npm test" } })])).querySelector(".turn-now-what")!.textContent).toBe("Running: npm test");
+    delete w.thinkingPhrase;
+    delete w.streamActivitySignal;
+  });
+
   it("a finished reply's paint has no status line", () => {
     const done = { ...store([start("j", "bash", "t1", { startedMs: Date.now() }), end("j", "bash")]), lastContentMs: 0 };
     expect(A._buildLiveAssistantInto(document.body, done).querySelector(".turn-now")).toBeNull();

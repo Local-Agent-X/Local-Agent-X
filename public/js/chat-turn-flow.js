@@ -136,6 +136,24 @@ function _formatTokens(n) {
 // The call's own clock shows once it has run this long.
 const _CALL_CLOCK_AFTER_MS = 5000;
 
+// Between calls the line says what the old dots said: one of Agent X's
+// phrases ("Working the angles…"), rotating, from thinking-phrases.js; "Radio
+// silence" when nothing proves the turn is alive. The bubble is rebuilt on
+// every event, so the phrase is held for its whole turn on screen, not picked
+// per build.
+const _PHRASE_EVERY_MS = 3800;
+let _phrase = null;
+let _phraseAt = 0;
+function _thinkingPhrase(now) {
+  const w = typeof window !== 'undefined' ? window : {};
+  try {
+    if (typeof w.streamActivitySignal === 'function' && w.streamActivitySignal().state === 'silent') return 'Radio silence';
+  } catch { /* no signal for this page: the phrase rotates as before */ }
+  if (typeof w.thinkingPhrase !== 'function') return 'Thinking';
+  if (!_phrase || now - _phraseAt >= _PHRASE_EVERY_MS) { _phrase = w.thinkingPhrase(); _phraseAt = now; }
+  return _phrase;
+}
+
 // The last line of a running reply, the one place the action in flight is
 // named: "Running: npm run build… (15s of 2m 11s · ↓ ~1.5k tokens)", or
 // "Thinking… (46s · ↓ ~15 tokens)" between calls. `turn` (the live bubble
@@ -166,8 +184,11 @@ function renderTurnNow(toolEvents, turn) {
     // a.ts"); for the rest it prints the raw arguments, so name the tool alone.
     const summary = toolSummary(call.name, call.args || '');
     what.textContent = summary.startsWith(call.name + ' ') ? 'Running ' + call.name : summary;
+  } else if (t.writing) {
+    what.textContent = 'Writing';
   } else {
-    what.textContent = t.writing ? 'Writing' : 'Thinking';
+    what.textContent = _thinkingPhrase(Date.now());
+    what.dataset.phrase = '1';
   }
   const meta = document.createElement('span');
   meta.className = 'turn-now-meta';
@@ -249,6 +270,8 @@ function _tickTurnNow() {
     if (t) t.textContent = formatElapsed(now - Number(el.dataset.since));
     const c = el.querySelector('.turn-now-call');
     if (c && el.dataset.callSince) _setCallClock(c, now - Number(el.dataset.callSince));
+    const phrase = el.querySelector('.turn-now-what[data-phrase]');
+    if (phrase) phrase.textContent = _thinkingPhrase(now);
   });
 }
 if (typeof window !== 'undefined' && !window._turnNowTicker) window._turnNowTicker = setInterval(_tickTurnNow, 1000);

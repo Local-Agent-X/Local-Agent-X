@@ -118,6 +118,29 @@ describe("a chat's own build workers", () => {
     }
   });
 
+  // Shop Helper, 2026-11-27: chunks 2 and 3 were flagged "same files" for
+  // different files in src/shared/, which the build merges itself.
+  it("workers of one build are the build's to merge: no clash between them on the panel", () => {
+    const build = (id: string) => id.startsWith("op-chunk");
+    _setWorkClaimsForTest({
+      dir: join(repo, "..", "holders"),
+      readOp: (id) => ({ id, lane: id === "op-chat" ? "interactive" : "agent", status: "running", task: id, contextPack: { routing: { buildWorker: build(id) } }, canonical: { leaseExpiresAt: new Date(Date.now() + 60_000).toISOString() } }) as unknown as Op,
+    });
+    recordClaims({ sessionId: "agent-c2", opId: "op-chunk-2", paths: [join(repo, "src", "shared", "storeSchema.ts")], source: "declared", displayName: "Chunk 2/9" });
+    recordClaims({ sessionId: "agent-c3", opId: "op-chunk-3", paths: [join(repo, "src", "shared")], source: "declared", displayName: "Chunk 3/9" });
+    let rows = Object.fromEntries(workClaimRows().map((r) => [r.sessionId, r]));
+    expect(rows["agent-c2"].clashesWith).toEqual([]);
+    expect(rows["agent-c3"].clashesWith).toEqual([]);
+    // Someone outside the build in the same folder is still shown, and as a folder.
+    recordClaims({ sessionId: "chat-x", opId: "op-chat", paths: [join(repo, "src", "shared", "prompt.ts")], source: "written", displayName: "Your chat" });
+    rows = Object.fromEntries(workClaimRows().map((r) => [r.sessionId, r]));
+    expect(rows["agent-c3"]).toMatchObject({ clashesWith: ["Your chat"], clashScope: "folder" });
+    // The same file is "files".
+    recordClaims({ sessionId: "chat-x", opId: "op-chat", paths: [join(repo, "src", "shared", "storeSchema.ts")], source: "written", displayName: "Your chat" });
+    rows = Object.fromEntries(workClaimRows().map((r) => [r.sessionId, r]));
+    expect(rows["agent-c2"]).toMatchObject({ clashesWith: ["Your chat"], clashScope: "files" });
+  });
+
   it("a worker that has finished clashes with nothing", () => {
     _setWorkClaimsForTest({
       dir: join(repo, "..", "holders"),

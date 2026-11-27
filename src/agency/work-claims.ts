@@ -121,6 +121,19 @@ export function onSameErrand(a: string, b: string): boolean {
   return getSessionOwner(a)?.browserSessionId === b || getSessionOwner(b)?.browserSessionId === a;
 }
 
+/** Two workers of one build: build workers (ops/types.ts routing.buildWorker)
+ *  in the same project, which runs one build at a time. The build plans their
+ *  files, gives each its own copy, and merges or reconciles what they share,
+ *  so an overlap between them is the build's to handle, not the owner's: the
+ *  AGENTS panel flagged "same files" between Shop Helper's chunks 2 and 3,
+ *  which held different files in one folder (2026-11-27). Only the panel reads
+ *  this; a worker is still told at write time (findClashes). */
+export function sameBuild(a: WorkHolder, b: WorkHolder): boolean {
+  if (a.repoKey !== b.repoKey || !a.opId || !b.opId) return false;
+  const builds = (opId: string) => readOpFor(opId)?.contextPack?.routing?.buildWorker === true;
+  return builds(a.opId) && builds(b.opId);
+}
+
 /** Whether a holder is working now, between messages, lately, or gone. */
 export function holderState(h: WorkHolder): HolderState {
   const op = h.opId ? readOpFor(h.opId) : null;

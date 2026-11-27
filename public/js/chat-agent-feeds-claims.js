@@ -38,7 +38,9 @@ function workClaimOpenAttrs(row) {
 function workClaimRowHtml(row) {
   var areas = (row.areas || []).map(function (a) { return '<code>' + esc(a) + '</code>'; }).join(' ');
   var clash = (row.clashesWith || []).length
-    ? '<div class="work-claim-clash" title="Both are changing the same files">&#9888; same files as ' + esc(row.clashesWith.join(', ')) + '</div>'
+    ? (row.clashScope === 'folder'
+      ? '<div class="work-claim-clash" title="Both are changing files in the same folder">&#9888; same folder as ' + esc(row.clashesWith.join(', ')) + '</div>'
+      : '<div class="work-claim-clash" title="Both are changing the same files">&#9888; same files as ' + esc(row.clashesWith.join(', ')) + '</div>')
     : '';
   return '<div class="work-claim-row ' + esc(row.state) + (clash ? ' clash' : '') + '"' + workClaimOpenAttrs(row) + '>'
     + '<div class="work-claim-head"><span class="work-claim-dot"></span>'

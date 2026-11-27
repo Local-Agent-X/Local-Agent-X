@@ -18,7 +18,7 @@
 import { basename } from "node:path";
 import type { RouteHandler } from "../../server-context.js";
 import { jsonResponse } from "../../server-utils.js";
-import { holderNamesFrom, namedHolders, onSameErrand, setClaimsChangedListener, type HolderNames, type HolderView } from "../../agency/work-claims.js";
+import { holderNamesFrom, namedHolders, onSameErrand, sameBuild, setClaimsChangedListener, type HolderNames, type HolderView } from "../../agency/work-claims.js";
 import { areasOf, reposOfSession } from "../../agency/other-agents-block.js";
 import { normRepoPath, repoPathsOverlap } from "../../agency/path-overlap.js";
 import { handleOwnCopyRoutes, ownCopyView } from "./own-copy.js";
@@ -36,13 +36,24 @@ export interface WorkClaimRow {
   areas: string[];
   /** Other holders in the same repo whose claims overlap this one's. */
   clashesWith: string[];
+  /** "files" when some file is claimed by both; "folder" when the overlap is
+   *  only one side's folder holding the other's files. */
+  clashScope?: "files" | "folder";
 }
 
 function overlaps(a: HolderView, b: HolderView): boolean {
   return a.claims.some((x) => b.claims.some((y) => repoPathsOverlap(normRepoPath(x.path), normRepoPath(y.path))));
 }
 
+function sharesAFile(a: HolderView, b: HolderView): boolean {
+  return a.claims.some((x) => b.claims.some((y) => normRepoPath(x.path) === normRepoPath(y.path)));
+}
+
 function rowOf(h: HolderView, all: HolderView[]): WorkClaimRow {
+  // A run that has ended (`recent`) is not changing anything any more, and
+  // workers of one build are the build's to merge (work-claims.ts sameBuild).
+  const clashing = h.state === "recent" ? [] : all.filter((o) => o !== h && o.repoKey === h.repoKey && o.state !== "recent"
+    && !onSameErrand(h.sessionId, o.sessionId) && !sameBuild(h, o) && overlaps(h, o));
   return {
     sessionId: h.sessionId,
     opId: h.opId ?? null,
@@ -53,10 +64,8 @@ function rowOf(h: HolderView, all: HolderView[]): WorkClaimRow {
     state: h.state,
     folder: basename(h.checkout),
     areas: areasOf(h),
-    // A run that has ended (`recent`) is not changing anything any more.
-    clashesWith: h.state === "recent" ? [] : all
-      .filter((o) => o !== h && o.repoKey === h.repoKey && o.state !== "recent" && !onSameErrand(h.sessionId, o.sessionId) && overlaps(h, o))
-      .map((o) => o.displayName),
+    clashesWith: clashing.map((o) => o.displayName),
+    ...(clashing.length ? { clashScope: clashing.some((o) => sharesAFile(h, o)) ? "files" as const : "folder" as const } : {}),
   };
 }
 

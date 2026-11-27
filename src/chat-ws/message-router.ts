@@ -46,6 +46,23 @@ export interface RouterContext {
   screen?: ScreenAttachment | null;
 }
 
+/** Frames about the socket itself, not a chat: the page's ping and its
+ *  report of what it saw before reconnecting. True when it was one. */
+function handleConnectionFrame(ws: WebSocket, msg: Record<string, unknown>): boolean {
+  // JSON ping/pong — browser WS API doesn't expose protocol-level
+  // ping frames, so the client sends {type:"ping"} and we echo
+  // {type:"pong"} so it can detect half-open from its end too.
+  if (msg.type === "ping") {
+    try { sendFrame(ws, { type: "pong", ts: Date.now() }); } catch {}
+    return true;
+  }
+  if (msg.type === "client_diag") {
+    noteClientReport(ws, msg);
+    return true;
+  }
+  return false;
+}
+
 export function attachMessageRouter(ctx: RouterContext): void {
   const { ws, subscriptions } = ctx;
   ws.on("message", async (data: Buffer) => {
@@ -68,20 +85,9 @@ export function attachMessageRouter(ctx: RouterContext): void {
     const type = msg.type as string;
     const sessionId = msg.sessionId as string;
 
-    // JSON ping/pong — browser WS API doesn't expose protocol-level
-    // ping frames, so the client sends {type:"ping"} and we echo
-    // {type:"pong"} so it can detect half-open from its end too.
-    if (type === "ping") {
-      try { sendFrame(ws, { type: "pong", ts: Date.now() }); } catch {}
-      return;
-    }
-
+    if (handleConnectionFrame(ws, msg)) return;
     if (handleProcessRelayAck(msg, subscriptions)) return;
 
-    if (type === "client_diag") {
-      noteClientReport(ws, msg);
-      return;
-    }
     if (type === "subscribe" && sessionId) {
       subscriptions.add(sessionId);
       noteSubscribed(ws, sessionId);

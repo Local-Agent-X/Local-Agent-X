@@ -12,7 +12,7 @@ import { foldSystemRowsIntoPrompt } from "./message-convert.js";
 import { appendSystemPromptSection } from "../../context/system-prompt-builder.js";
 import { preflightCapabilityAwarePrompt } from "../prompt-preflight.js";
 import type { OpenAICompatTarget } from "../adapters/openai-compat.js";
-import { recordUserLinks } from "../../browser/site-provenance.js";
+import { recordHistoryLinks, recordUserLinks } from "../../browser/site-provenance.js";
 import { OP_TYPE } from "../../ops/op-types.js";
 
 function readChatWallClockMs(): number {
@@ -85,10 +85,11 @@ export async function createChatOp(ctx: CanonicalChatContext): Promise<CreatedCh
 
   trackOpForSession(op.id, ctx.sessionId, ctx.message);
   // Earlier messages too: provenance lives in memory, and a restart would
-  // otherwise forget a link the user pasted before it.
-  for (const m of ctx.prepared.cleanHistory) {
-    if (m.role === "user" && typeof m.content === "string") recordUserLinks(ctx.sessionId, m.content);
-  }
+  // otherwise forget a link the user pasted before it, or one a tool printed
+  // (a build's download link, opened after a restart, asked the owner whether
+  // its id was a password, 2026-11-26). What a tool result holds here is what
+  // the model was shown, secrets already masked.
+  recordHistoryLinks(ctx.sessionId, ctx.prepared.cleanHistory);
   recordUserLinks(ctx.sessionId, ctx.message);
   writeOp(op);
   // The chat is on a new turn: its claims on files are current again (ADR 0007).

@@ -5,7 +5,7 @@
 // because that page never showed the agent the user's secret.
 import { afterEach, describe, expect, it } from "vitest";
 
-import { _clearSiteProvenance, recordSiteTokens, recordUserLinks } from "./site-provenance.js";
+import { _clearSiteProvenance, recordHistoryLinks, recordSiteTokens, recordUserLinks } from "./site-provenance.js";
 import { ToolChainAnalyzer } from "../threat/tool-chain.js";
 import { probeEgressGuard } from "../tool-execution/egress-gates.js";
 import { applyResultTaintPolicy, setPreExecuteTaintFloor } from "../tool-execution/sensitive-read-taint.js";
@@ -62,6 +62,24 @@ describe("a link a tool's output printed", () => {
     expect(browserCall({ action: "navigate", url: ARTIFACT })?.reason).toMatch(/random-looking text/);
     run("eas build:view --json", JSON.stringify({ status: "FINISHED", artifact: ARTIFACT }));
     expect(browserCall({ action: "navigate", url: ARTIFACT })).toBeNull();
+  });
+
+  // After a restart the agent opened the link from its earlier conversation,
+  // without running the command again, and the card was back (2026-11-26).
+  it("a restart forgets nothing: a turn re-reads the links its history's tool results hold", () => {
+    _clearSiteProvenance();
+    expect(browserCall({ action: "navigate", url: ARTIFACT })?.reason).toMatch(/random-looking text/);
+    recordHistoryLinks(SESSION, [
+      { role: "user", content: "install the preview" },
+      { role: "assistant", content: "Checking the build." },
+      { role: "tool", content: JSON.stringify({ status: "FINISHED", artifact: ARTIFACT }) },
+    ]);
+    expect(browserCall({ action: "navigate", url: ARTIFACT })).toBeNull();
+  });
+
+  it("an assistant's own words vouch for nothing", () => {
+    recordHistoryLinks(SESSION, [{ role: "assistant", content: `open ${ARTIFACT}` }]);
+    expect(browserCall({ action: "navigate", url: ARTIFACT })?.reason).toMatch(/random-looking text/);
   });
 
   it("the id it printed may go back to its own site only", () => {

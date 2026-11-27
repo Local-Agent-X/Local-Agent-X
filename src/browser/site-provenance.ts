@@ -93,6 +93,15 @@ export function recordLinks(sessionId: string, text: string): void {
 /** Each link the user typed (recordLinks). */
 export const recordUserLinks = recordLinks;
 
+/** The links a chat's history holds, from what the user typed and what tools
+ *  printed, recorded again when a turn starts: provenance lives in memory,
+ *  and a restart forgot them. */
+export function recordHistoryLinks(sessionId: string, history: readonly { role: string; content?: unknown }[]): void {
+  for (const m of history) {
+    if ((m.role === "user" || m.role === "tool") && typeof m.content === "string") recordLinks(sessionId, m.content);
+  }
+}
+
 function remember(state: SessionProvenance, site: string, text: string): void {
   let seen = state.bySite.get(site);
   if (!seen) {

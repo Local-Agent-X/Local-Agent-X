@@ -26,6 +26,7 @@ import { totalTokens } from "./token-estimation.js";
 import { summarizeOldMessages } from "./compaction.js";
 import { pruneFinishedTurnToolResults } from "./prune-tool-results.js";
 import { shortenSpentAppRequests } from "./spent-app-requests.js";
+import { dropNoopShellCalls } from "./noop-shell-calls.js";
 import {
   CHECKPOINT_KEEP_RECENT,
   CHECKPOINT_REFRESH_MIN_GROWTH,
@@ -61,8 +62,9 @@ export function applyCheckpoint(
   checkpoint: { summary: string; coversThrough: number } | undefined,
 ): ChatCompletionMessageParam[] {
   const pruned = shortenSpentAppRequests(pruneFinishedTurnToolResults(messages));
-  if (!checkpoint || checkpoint.coversThrough <= 0 || checkpoint.coversThrough > pruned.length) return pruned;
-  return [summaryRow(checkpoint.summary), ...pruned.slice(checkpoint.coversThrough)];
+  // Last, on the view: it changes the row count (noop-shell-calls.ts).
+  if (!checkpoint || checkpoint.coversThrough <= 0 || checkpoint.coversThrough > pruned.length) return dropNoopShellCalls(pruned);
+  return dropNoopShellCalls([summaryRow(checkpoint.summary), ...pruned.slice(checkpoint.coversThrough)]);
 }
 
 /**

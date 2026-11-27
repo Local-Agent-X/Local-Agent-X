@@ -128,7 +128,8 @@ export const wrapUpTool: ToolDefinition = {
       const refusal = openStepsRefusal(sessionId, operationIdOf(args));
       if (refusal) return { content: refusal, isError: true };
     }
-    const plan = finishCurrentStep(sessionId, liveWork);
+    const op = operationIdOf(args) ? readOp(operationIdOf(args)!) : null;
+    const plan = finishCurrentStep(sessionId, liveWork, op ? op.startedAt ?? op.createdAt : undefined);
     const said = wrapUp.ask ? " The question is shown with its buttons: end your turn here and wait for the answer." : "";
     return { content: `Shown to the user as the turn's recap.${said}`, metadata: { wrapUp, ...(plan.length > 0 ? { plan } : {}) } };
   },

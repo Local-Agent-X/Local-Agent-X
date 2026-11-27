@@ -192,6 +192,27 @@ describe("wrap_up on a plan with steps not started", () => {
     expect(r.isError).toBeFalsy();
   });
 
+  // Label Check Sol, 2026-11-26: a turn that installed the app ended with the
+  // list an earlier turn had left, its install step marked failed, drawn under
+  // the reply that said the install worked.
+  it("does not draw a list an earlier request left, or change it", async () => {
+    const earlier = turn();
+    await plan.execute({ items: [{ content: "Verify the phone", status: "completed" }, { content: "Install the APK", status: "failed" }, { content: "Test it", status: "in_progress" }], ...earlier });
+    await new Promise((r) => setTimeout(r, 5));
+    const later = "op_chat_turn_wrapup_later_list";
+    writeOp({ ...baseOp(later, OP_TYPE.chatTurn), sessionId: earlier._sessionId, status: "running", createdAt: new Date().toISOString() });
+    const r = await wrapUpTool.execute({ recap: "Installed and running.", _sessionId: earlier._sessionId, _operationId: later });
+    expect(r.isError).toBeFalsy();
+    expect(r.metadata?.plan).toBeUndefined();
+    // Its step in progress is left as it was, not ticked by an unrelated close.
+    expect(getOpenTasksForSession(earlier._sessionId)).toHaveLength(1);
+
+    // A list this request did touch is drawn as before.
+    await plan.execute({ items: [{ content: "Install the APK", status: "in_progress" }], _sessionId: earlier._sessionId, _operationId: later });
+    const drawn = await wrapUpTool.execute({ recap: "Installed.", _sessionId: earlier._sessionId, _operationId: later });
+    expect(statuses(drawn)).toEqual(["completed"]);
+  });
+
   it("does not push a request the user told to change nothing", async () => {
     const t = turn();
     setOpLedger(t._operationId, { prohibitions: ["workspace-write"], obligations: [], phrases: ["don't change anything"] });

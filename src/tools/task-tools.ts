@@ -299,9 +299,14 @@ const updatePlan: ToolDefinition = {
  * which background work was started that is still running (`liveWorkStartedAt`, each
  * an ISO time) is that work: it stays in progress until the work ends. Returns the list.
  */
-export function finishCurrentStep(sessionId: string, liveWorkStartedAt: readonly string[] = []): PlanStep[] {
+export function finishCurrentStep(sessionId: string, liveWorkStartedAt: readonly string[] = [], since?: string): PlanStep[] {
   if (!sessionId) return [];
   const tasks = loadTasks();
+  // A list this request never touched is an earlier request's, shown as it
+  // was left. Drawn again under this reply, an install that had failed read
+  // as failed beside the message saying it was done (Label Check Sol,
+  // 2026-11-26). It is not this request's to finish or to show.
+  if (since && !tasks.some((t) => t.session_id === sessionId && t.updated_at >= since)) return [];
   const done = tasks.filter((t) => t.session_id === sessionId && t.status === "in_progress"
     && !liveWorkStartedAt.some((startedAt) => startedAt >= t.updated_at));
   if (done.length === 0) return planOf(tasks, sessionId);

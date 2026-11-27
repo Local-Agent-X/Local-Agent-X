@@ -28,9 +28,7 @@ export function createRunBuildPlanTool(
       "(/senior-engineer for trunk, /vibe-code for leaf), runs the /chunk-review gates (done-when + " +
       "additive spec-diff + phase-gate + launch-readiness + test-failure), halts at phase-gates and " +
       "launch-readiness blockers. Each gate halt persists to disk so a restart can resume.\n\n" +
-      "Companion to /greenfield: where that produces the spec, this consumes it.\n\n" +
-      "Opt-out via LAX_AUTO_BUILD_ENABLED env flag — default ON. Set the flag to " +
-      "0/false/no/off to disable for this server.",
+      "Companion to /greenfield: where that produces the spec, this consumes it.",
     parameters: {
       type: "object",
       properties: {

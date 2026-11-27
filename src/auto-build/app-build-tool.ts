@@ -14,7 +14,11 @@
  *      the build to this chat; holdout_judge scores the running app against
  *      the sealed suite.
  *
- * Gated behind LAX_AUTO_BUILD_ENABLED, the flag the build engine uses.
+ * Switched off only when LAX_AUTO_BUILD_ENABLED is set to 0/false/no/off (the
+ * build engine's opt-out flag); it then returns a blocked result saying so.
+ * The description does not mention the flag: Grok read "Gated behind" as
+ * "off unless set", checked, found it unset, and never called the tool
+ * (2026-11-27, tool-description-settings.test.ts).
  */
 
 import type { ToolDefinition, ToolResult } from "../types.js";
@@ -39,8 +43,7 @@ export const startAppBuildTool: ToolDefinition = {
     "Disambiguation:\n" +
     "- 'plan a new app spec-first', 'build me a new product from scratch', 'build it autonomously' → THIS TOOL.\n" +
     "- 'make me a quick landing page', 'throw together a one-page site', or 'build app X' with no planning ask → " +
-    "`build_app`, not this tool.\n\n" +
-    "Gated behind LAX_AUTO_BUILD_ENABLED env flag.",
+    "`build_app`, not this tool.",
   parameters: {
     type: "object",
     properties: {

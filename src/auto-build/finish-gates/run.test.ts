@@ -182,6 +182,33 @@ describe("runFinishGates", () => {
 // round 1: the break-it agents ran again, the fix chunks were numbered 1011 on,
 // and a new 1012 would have picked up the set-aside 1012's branch
 // (label-check-sol, 2026-11-25).
+// label-check-grok, 2026-11-27: "a second tab" and "a Cyrillic letter in your
+// own medication list" were rated high on a one-person phone app and fixed.
+describe("findings the app as built cannot meet", () => {
+  it("are listed for the owner with why, and never become fix work", async () => {
+    const found: BreakerResult[] = [{
+      persona: "hostile", status: "ran", findings: [
+        { severity: "high", text: "two tabs tear the list", reach: "unreachable", reachWhy: "a phone app has no second tab" },
+        { severity: "high", text: "a spoofed lookup shows 'safe'", reach: "reachable", reachWhy: "the lookup service's answer" },
+      ],
+    }];
+    const h = harness([{ suite: { failed: [], unjudged: [] }, found }, { suite: { failed: [], unjudged: [] }, found: [] }]);
+    const out = await run(h);
+    const fixed = h.buildFixes.mock.calls.flatMap((c) => c[0].plan.chunks);
+    expect(fixed).toHaveLength(1);
+    expect(fixed[0].slice).toContain("a spoofed lookup shows 'safe'");
+    expect(fixed[0].slice).not.toContain("two tabs");
+    expect(out.openItems).toContain("hostile [high, not reachable as built: a phone app has no second tab]: two tabs tear the list");
+  });
+
+  it("an app with only unreachable findings is not fixed at all", async () => {
+    const found: BreakerResult[] = [{ persona: "hostile", status: "ran", findings: [{ severity: "critical", text: "x", reach: "unreachable", reachWhy: "needs a desktop browser" }] }];
+    const h = harness([{ suite: { failed: [], unjudged: [] }, found }]);
+    await run(h);
+    expect(h.buildFixes).not.toHaveBeenCalled();
+  });
+});
+
 describe("runFinishGates — where a stopped build left them", () => {
   const fix = (n: number): ParsedChunk => ({ ...chunk(n), title: `Finish fix 1: f${n}`, phase: "Finish", klass: "trunk" });
   const saved = (over: Partial<FinishProgress> = {}): FinishProgress => ({

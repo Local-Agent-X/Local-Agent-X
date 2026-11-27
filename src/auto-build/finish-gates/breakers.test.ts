@@ -22,6 +22,8 @@ describe("runBreakers", () => {
     expect(run).toHaveBeenCalledTimes(PERSONAS.length);
     expect(new Set(run.mock.calls.map(([o]) => o.role))).toEqual(new Set(["finish-breaker"]));
     expect(run.mock.calls[0][0].task).toContain("End by calling breaker_findings");
+    // Each finding is graded against the app as built: a phone app has no second tab.
+    expect(run.mock.calls[0][0].task).toContain("Unreachable means it needs something the app does not have");
     expect(results.find((r) => r.persona === "hostile")).toEqual({ persona: "hostile", status: "ran", findings: [leak] });
     expect(results.every((r) => r.status === "ran")).toBe(true);
     expect(existsSync(join(dir, ".skeptic"))).toBe(false);

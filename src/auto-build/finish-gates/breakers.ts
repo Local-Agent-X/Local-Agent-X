@@ -10,8 +10,12 @@
  * Each persona is one `finish-breaker` agent (agents/chunk-runner.ts: read,
  * search, shell, no edit; its writes fenced to the probe folder) over the
  * finished app, told what to hunt for. It answers with a FINDINGS block, one
- * line per finding with its severity. Critical, high and medium findings are
- * fixed (finish-gates/run.ts); low ones are listed.
+ * line per finding with its severity and its reach. Critical, high and
+ * medium findings someone using the app can reach are fixed
+ * (finish-gates/run.ts); low ones, and any the app as built cannot meet, are
+ * listed. Without reach, label-check-grok's hostile agent rated "a second tab"
+ * and "a Cyrillic letter in your own medication list" high on a one-person
+ * phone app, and each became fix work that found more (2026-11-27).
  */
 
 import { existsSync, rmSync } from "node:fs";
@@ -23,7 +27,15 @@ export type Severity = "critical" | "high" | "medium" | "low";
 export interface BreakerFinding {
   severity: Severity;
   text: string;
+  /** Whether someone using the app as built can cause it. Absent on findings
+   *  saved before it existed: those read as reachable, as they were treated. */
+  reach?: "reachable" | "unreachable";
+  /** Who causes it and how, or what it needs that the app does not have. */
+  reachWhy?: string;
 }
+
+/** A finding the fix chunks may take on: one the app as built can meet. */
+export const isReachable = (f: BreakerFinding): boolean => f.reach !== "unreachable";
 
 export interface BreakerResult {
   persona: string;
@@ -86,8 +98,14 @@ export function buildBreakerTask(persona: Persona): string {
     `Read the code, run the app's tests and your own probes, and show each finding: the input or case, ` +
     `file:line, and how you showed it. A finding you ran beats one you traced. Report only what you found ` +
     `from your angle; do not fix anything.\n\n` +
+    `Grade each finding against this app as it is built and shipped, from spec/: the platform it runs on, who ` +
+    `uses it, where its input comes from. Reachable means someone in that picture can cause it (the person ` +
+    `using it, a network or service it talks to, a file or photo it is handed). Unreachable means it needs ` +
+    `something the app does not have: a second tab or window on a phone app, a person typing a trick into ` +
+    `their own data against themselves, a call no screen makes. Report unreachable findings too; they are ` +
+    `listed for the owner, not fixed. Severity is how bad it is when it happens.\n\n` +
     `End by calling breaker_findings with what you found, most serious first, at most ${MAX_FINDINGS}: each ` +
-    `with its severity and what breaks (the input or case, file:line, how you showed it). An empty list when ` +
+    `with its severity, its reach and what breaks (the input or case, file:line, how you showed it). An empty list when ` +
     `nothing broke.`
   );
 }

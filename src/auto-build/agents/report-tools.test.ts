@@ -52,7 +52,11 @@ describe("readSkepticVerdict and readBreakerFindings", () => {
 
   it("findings are a list, empty when nothing broke; one that cannot be read is refused, never dropped", () => {
     expect(readBreakerFindings({ findings: [] })).toEqual({ findings: [] });
-    expect(readBreakerFindings({ findings: [{ severity: "high", text: "the list drops its last item" }] })).toEqual({ findings: [{ severity: "high", text: "the list drops its last item" }] });
+    const found = { severity: "high", text: "the list drops its last item", reach: "reachable", reach_why: "anyone who saves a second item" };
+    expect(readBreakerFindings({ findings: [found] })).toEqual({ findings: [{ severity: "high", text: "the list drops its last item", reach: "reachable", reachWhy: "anyone who saves a second item" }] });
+    // Whether a person using the app can cause it is said, never assumed.
+    expect(readBreakerFindings({ findings: [{ severity: "high", text: "x" }] })).toEqual({ error: expect.stringContaining("each finding needs `reach`") });
+    expect(readBreakerFindings({ findings: [{ ...found, reach: "unreachable", reach_why: "" }] })).toEqual({ error: expect.stringContaining("reach_why") });
     expect(readBreakerFindings({})).toEqual({ error: expect.stringContaining("findings must be a list") });
     expect(readBreakerFindings({ findings: [{ severity: "severe", text: "x" }] })).toEqual({ error: expect.stringContaining("each finding needs") });
     expect(readBreakerFindings({ findings: ["the list drops its last item"] })).toEqual({ error: expect.stringContaining("must be an object") });

@@ -30,7 +30,7 @@ import { scoreScenarioFiles } from "../scenario-scorer/phase-gate-runner.js";
 import type { ScoreReport } from "../scenario-scorer/types.js";
 import type { ParsedChunk } from "../plan-parser.js";
 import type { EmitFn, LoopOptions, LoopResult } from "../loop/types.js";
-import { runBreakers, type BreakerResult } from "./breakers.js";
+import { isReachable, runBreakers, type BreakerResult } from "./breakers.js";
 import { askLeadBuildCall } from "../advisor/lead-decisions.js";
 import { FIX_CHUNK_PHASE, fixChunkNumber, fixChunkTitle, nextFinishRunBase, splitFromFix, type FinishProgress } from "./fix-chunk.js";
 import { parsePlanFile } from "../plan-parser.js";
@@ -94,7 +94,7 @@ export async function judgeWholeSuite(opts: LoopOptions, say: (m: string) => voi
 }
 
 const scenarioNumber = (r: ScoreReport): string => (basename(r.scenarioPath).match(/^(\d+)/) || [])[1] ?? "";
-const fixable = (b: BreakerResult) => b.findings.filter((f) => f.severity !== "low");
+const fixable = (b: BreakerResult) => b.findings.filter((f) => f.severity !== "low" && isReachable(f));
 /**
  * What a round's fix chunks take on. The first round fixes everything that is
  * not low. Later rounds fix critical and high only: a break-it agent sent at
@@ -104,7 +104,7 @@ const fixable = (b: BreakerResult) => b.findings.filter((f) => f.severity !== "l
  * 2026-11-25). What a later round finds below high is listed for the owner.
  */
 const fixedIn = (round: number) => (f: BreakerResult["findings"][number]): boolean =>
-  round <= 1 ? f.severity !== "low" : f.severity === "critical" || f.severity === "high";
+  isReachable(f) && (round <= 1 ? f.severity !== "low" : f.severity === "critical" || f.severity === "high");
 
 /** Fix chunks for what a round found: one for the failing scenarios, one per
  *  angle with a critical, high or medium finding. */
@@ -140,7 +140,10 @@ function openItemsOf(suite: SuiteJudging, breakers: BreakerResult[], lows = true
   for (const r of suite.unjudged) items.push(`scenario ${basename(r.scenarioPath)} could not be judged: ${r.abortReason}`);
   for (const b of breakers) {
     if (b.status === "not-run") items.push(`the ${b.persona} break-it agent did not check the app: ${b.note}`);
-    for (const f of b.findings) if (lows || f.severity !== "low") items.push(`${b.persona} [${f.severity}]: ${f.text.slice(0, 240)}`);
+    for (const f of b.findings) {
+      if (!isReachable(f)) items.push(`${b.persona} [${f.severity}, not reachable as built: ${(f.reachWhy ?? "").slice(0, 120)}]: ${f.text.slice(0, 240)}`);
+      else if (lows || f.severity !== "low") items.push(`${b.persona} [${f.severity}]: ${f.text.slice(0, 240)}`);
+    }
   }
   return items;
 }

@@ -46,7 +46,7 @@ export interface SkepticVerdictCall {
 }
 
 export interface BreakerFindingsCall {
-  findings: { severity: "critical" | "high" | "medium" | "low"; text: string }[];
+  findings: { severity: "critical" | "high" | "medium" | "low"; text: string; reach: "reachable" | "unreachable"; reachWhy: string }[];
 }
 
 interface Reports { chunk: ChunkReportCall; skeptic: SkepticVerdictCall; breaker: BreakerFindingsCall }

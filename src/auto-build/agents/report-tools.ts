@@ -21,6 +21,7 @@ const STATUSES = ["done", "blocked", "partial"] as const;
 const DONE_WHENS = ["met", "deferred", "unmet"] as const;
 const VERDICTS = ["holds", "broken"] as const;
 const SEVERITIES = ["critical", "high", "medium", "low"] as const;
+const REACHES = ["reachable", "unreachable"] as const;
 
 export function readChunkReport(args: Record<string, unknown>): Read<ChunkReportCall> {
   const status = oneOf(args.status, STATUSES);
@@ -56,7 +57,10 @@ export function readBreakerFindings(args: Record<string, unknown>): Read<Breaker
     const severity = oneOf(item.severity, SEVERITIES);
     const said = text(item.text);
     if (!severity || !said) return { error: `each finding needs \`severity\` (${SEVERITIES.join(", ")}) and \`text\` (what breaks and how you showed it).` };
-    findings.push({ severity, text: said });
+    const reach = oneOf(item.reach, REACHES);
+    const reachWhy = text(item.reach_why);
+    if (!reach || !reachWhy) return { error: `each finding needs \`reach\` (${REACHES.join(" or ")}: can someone using this app as built cause it?) and \`reach_why\` (who causes it and how, or what it needs that this app does not have).` };
+    findings.push({ severity, text: said, reach, reachWhy });
   }
   if (findings.length !== args.findings.length) return { error: "each finding must be an object with `severity` and `text`." };
   return { findings };
@@ -123,7 +127,16 @@ export const breakerFindingsTool = reportTool("breaker", "breaker_findings",
     properties: {
       findings: {
         type: "array", description: "Each thing that breaks, most serious first. An empty list when nothing did.",
-        items: { type: "object", properties: { severity: { type: "string", enum: [...SEVERITIES] }, text: str("What breaks and how you showed it.") }, required: ["severity", "text"] },
+        items: {
+          type: "object",
+          properties: {
+            severity: { type: "string", enum: [...SEVERITIES] },
+            text: str("What breaks and how you showed it."),
+            reach: { type: "string", enum: [...REACHES], description: "reachable: someone using this app as it is built and shipped (its platform, its users, where its input comes from) can cause it. unreachable: it needs something this app does not have." },
+            reach_why: str("Who causes it and how; or, when unreachable, what it needs that this app does not have."),
+          },
+          required: ["severity", "text", "reach", "reach_why"],
+        },
       },
     },
     required: ["findings"],

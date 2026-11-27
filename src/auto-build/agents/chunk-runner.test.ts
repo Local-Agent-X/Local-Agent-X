@@ -159,10 +159,10 @@ describe("runChunkAgent returns what the run reported", () => {
     expect((await failed).skepticVerdict).toMatchObject({ verdict: "holds" });
 
     const cut = runChunkAgent({ role: "finish-breaker", task: "attack", projectDir: "C:/proj", silenceLimitMs: 40 });
-    await breakerFindingsTool.execute({ findings: [{ severity: "high", text: "the list drops its last item" }], _sessionId: session });
+    await breakerFindingsTool.execute({ findings: [{ severity: "high", text: "the list drops its last item", reach: "reachable", reach_why: "anyone with two items" }], _sessionId: session });
     const res = await cut;
     expect(res.exitCode).toBe(124);
-    expect(res.breakerFindings?.findings).toEqual([{ severity: "high", text: "the list drops its last item" }]);
+    expect(res.breakerFindings?.findings).toEqual([{ severity: "high", text: "the list drops its last item", reach: "reachable", reachWhy: "anyone with two items" }]);
   });
 
   it("a run that never reported returns none, and a call after it ended is refused", async () => {

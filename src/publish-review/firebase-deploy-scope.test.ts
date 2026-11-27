@@ -62,11 +62,11 @@ afterEach(() => {
 
 describe("firebase deploy --only: the review reads what the targets upload", () => {
   it("the command line names the targets, with or without =, past other flags", () => {
-    expect(deployOp("firebase deploy --only remoteconfig --project label-check-pmaj --non-interactive").deployOnly).toEqual(["remoteconfig"]);
-    expect(deployOp("npx firebase deploy --only=firestore:rules,storage").deployOnly).toEqual(["firestore:rules", "storage"]);
-    expect(deployOp("firebase deploy").deployOnly).toBeUndefined();
+    expect(deployOp("firebase deploy --only remoteconfig --project label-check-pmaj --non-interactive").uploads).toEqual({ tool: "firebase", only: ["remoteconfig"] });
+    expect(deployOp("npx firebase deploy --only=firestore:rules,storage").uploads).toEqual({ tool: "firebase", only: ["firestore:rules", "storage"] });
+    expect(deployOp("firebase deploy").uploads).toBeUndefined();
     // Another config file: its targets are not looked up.
-    expect(deployOp("firebase deploy --only remoteconfig --config other.json").deployOnly).toBeUndefined();
+    expect(deployOp("firebase deploy --only remoteconfig --config other.json").uploads).toBeUndefined();
   });
 
   it("--only remoteconfig reviews the template and firebase.json, not the lockfile or the source", async () => {

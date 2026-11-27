@@ -28,7 +28,7 @@ import { workspaceRoot } from "./config.js";
 import { publishFactOf, shellCommandOf } from "./tool-registry.js";
 import {
   assignedNames, gitRepoChange, matchPublishArgv, normalizeBin, pastAssignments, unwrapPackageRunner,
-  type GitOption, type PublishKind,
+  type DeployUpload, type GitOption, type PublishKind,
 } from "./publish-operation-table.js";
 import { cwdOf } from "./tool-execution/internal-args.js";
 
@@ -64,10 +64,10 @@ export interface PublishOperation {
   gitEnv?: string[];
   /** gh pr merge: the PR it names; gh release create: the tag. */
   explicitTarget?: string;
-  /** firebase deploy --only: the targets it names. The review reads only the
-   *  files those targets upload when it can name them all
-   *  (publish-review/firebase-deploy-scope.ts). */
-  deployOnly?: string[];
+  /** What a deploy uploads, when its command names it (`firebase deploy --only`,
+   *  `supabase functions deploy <name>`, `supabase db push`). The review reads only
+   *  those files when it can name them all (publish-review/change-set.ts uploadScope). */
+  uploads?: DeployUpload;
 }
 
 // A LAX tool whose whole purpose is to publish or deploy says so on its row
@@ -210,7 +210,7 @@ function shellPublishes(tool: string, command: string, start: string, toolEnv: s
       ...(match.gitOptions ? { gitOptions: match.gitOptions } : {}),
       ...(gitEnv.length ? { gitEnv } : {}),
       ...(match.explicitTarget ? { explicitTarget: match.explicitTarget } : {}),
-      ...(match.deployOnly ? { deployOnly: match.deployOnly } : {}),
+      ...(match.uploads ? { uploads: match.uploads } : {}),
     });
   }
   return found;

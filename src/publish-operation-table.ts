@@ -36,9 +36,20 @@ export interface PublishMatch {
   dirArg?: string;
   /** gh pr merge: the PR it names; gh release create: the tag. */
   explicitTarget?: string;
-  /** firebase deploy --only: the targets it names (`remoteconfig`, `firestore:rules`). */
-  deployOnly?: string[];
+  /** A deploy whose upload the command names, so its review can read just that
+   *  (publish-review/change-set.ts uploadScope). */
+  uploads?: DeployUpload;
 }
+
+/** What a deploy uploads, as its command names it. A deploy that names none uploads
+ *  its working tree, which is what gets reviewed. */
+export type DeployUpload =
+  /** `firebase deploy --only a,b`: the targets (`remoteconfig`, `firestore:rules`). */
+  | { tool: "firebase"; only: string[] }
+  /** `supabase functions deploy [names]`: those functions, every one when none is named. */
+  | { tool: "supabase"; what: "functions"; names: string[]; workdir?: string }
+  /** `supabase db push`: the migrations. */
+  | { tool: "supabase"; what: "migrations"; workdir?: string };
 
 /** `NAME=value` or `NAME+=value`: a shell assignment; group 1 is the name. */
 const ASSIGNMENT = /^([A-Za-z_][A-Za-z0-9_]*)\+?=/;
@@ -286,6 +297,7 @@ function matchSubcommandTable(bin: string, words: string[], at: number): Publish
       return { kind: row.kind, label, ...(target ? { explicitTarget: target } : {}) };
     }
     if (bin === "firebase") return { kind: row.kind, label, ...firebaseOnly(words, at + 1) };
+    if (bin === "supabase") return { kind: row.kind, label, ...supabaseUploads(row.sub, words, at + 1) };
     return { kind: row.kind, label };
   }
   // `eas build --auto-submit` submits the build it makes to the stores.
@@ -302,10 +314,27 @@ function matchSubcommandTable(bin: string, words: string[], at: number): Publish
 /** `firebase deploy --only a,b`: the targets it names. Left out when the
  *  deploy reads another config file (`--config`), whose targets the review
  *  does not look up, so the whole working tree is reviewed. */
-function firebaseOnly(words: string[], start: number): { deployOnly?: string[] } {
+function firebaseOnly(words: string[], start: number): { uploads?: DeployUpload } {
   if (hasFlag(words, start, "--config", "-c")) return {};
   const only = flagValue(words, start, "--only")?.split(",").map((t) => t.trim()).filter(Boolean);
-  return only?.length ? { deployOnly: only } : {};
+  return only?.length ? { uploads: { tool: "firebase", only } } : {};
+}
+
+const SUPABASE_VALUE_FLAGS = new Set([
+  "--project-ref", "--import-map", "--jobs", "-j", "--workdir", "--profile", "--output", "-o",
+  "--dns-resolver", "--network-id", "--password", "-p", "--db-url",
+]);
+
+/** `supabase functions deploy [names]` and `supabase db push`: what they upload
+ *  (publish-review/supabase-deploy-scope.ts). Left out when a flag sends more than
+ *  that: an import map, seed data, roles. */
+function supabaseUploads(sub: readonly string[], words: string[], start: number): { uploads?: DeployUpload } {
+  if (hasFlag(words, start, "--import-map", "--include-seed", "--include-roles")) return {};
+  const workdir = flagValue(words, start, "--workdir");
+  const where = workdir ? { workdir } : {};
+  if (sub[0] === "db") return { uploads: { tool: "supabase", what: "migrations", ...where } };
+  const names = positionals(words, start, SUPABASE_VALUE_FLAGS).slice(sub.length);
+  return { uploads: { tool: "supabase", what: "functions", names, ...where } };
 }
 
 /** Is the argv at `at` (the real command word) a publish? */

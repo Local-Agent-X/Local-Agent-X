@@ -38,6 +38,7 @@ import {
   pathspecs, pickRemote, previousTag, remoteDefaultRef, repoRootOf, untrackedFiles, upstreamOf,
 } from "./git-queries.js";
 import { firebaseDeployPaths } from "./firebase-deploy-scope.js";
+import { supabaseDeployPaths } from "./supabase-deploy-scope.js";
 
 type PartResult = ChangeSetPart | { reason: string; unsafe?: true };
 
@@ -46,7 +47,7 @@ export async function computeChangeSet(ops: PublishOperation[]): Promise<ChangeS
   const unknown: ChangeSet["unknown"] = [];
   const seen = new Set<string>();
   for (const op of ops) {
-    const key = JSON.stringify([op.kind, op.cwd, op.pushArgs ?? [], op.gitOptions ?? [], op.gitEnv ?? [], op.explicitTarget ?? "", op.repoChangedBefore ?? "", op.deployOnly ?? []]);
+    const key = JSON.stringify([op.kind, op.cwd, op.pushArgs ?? [], op.gitOptions ?? [], op.gitEnv ?? [], op.explicitTarget ?? "", op.repoChangedBefore ?? "", op.uploads ?? null]);
     if (seen.has(key)) continue;
     seen.add(key);
     const result = await partFor(op);
@@ -146,12 +147,18 @@ async function workingTreePart(op: PublishOperation, root: string): Promise<Part
   };
 }
 
-/** The files a deploy uploads, when it names them (firebase-deploy-scope.ts);
- *  null reviews the whole working tree. A file git ignores would ship with no
- *  diff to show it, so that one is reviewed as the whole tree too. */
+/** The files a deploy uploads, when its command names them: one scope module per
+ *  service (firebase-deploy-scope.ts, supabase-deploy-scope.ts). null reviews the
+ *  whole working tree, as for every deploy whose upload cannot be named for certain
+ *  (a bundler that follows imports anywhere: vercel, netlify, wrangler, eas update).
+ *  A file git ignores would ship with no diff to show it, so that one is reviewed as
+ *  the whole tree too. */
 async function uploadScope(op: PublishOperation, root: string): Promise<string[] | null> {
-  if (!op.deployOnly) return null;
-  const paths = await firebaseDeployPaths(op.cwd, root, op.deployOnly);
+  const upload = op.uploads;
+  if (!upload) return null;
+  const paths = upload.tool === "firebase"
+    ? await firebaseDeployPaths(op.cwd, root, upload.only)
+    : await supabaseDeployPaths(op.cwd, root, upload);
   if (!paths) return null;
   return (await anyIgnored(root, paths)) === false ? paths : null;
 }

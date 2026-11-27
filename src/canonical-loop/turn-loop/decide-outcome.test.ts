@@ -1668,6 +1668,16 @@ describe("decideTurnOutcome — interactive fully-empty turns terminate (no maxT
     expect(r.terminalReason).toBe(null);
   });
 
+  // Label Check Sol, 2026-11-27: a full answer with the promised step mid-reply
+  // ended the turn, and the owner had to type "?".
+  it("(e5) a full reply that names a step the agent would take does not end the turn, once", async () => {
+    const reply = "The scan failed on your Galaxy. The next step is to pinpoint why the on-device request failed. " +
+      "In the meantime, Enter ingredients instead lets you continue.";
+    expect((await decideTurnOutcome(announced(reply))).terminalReason).toBe(null);
+    expect(appendNudgeAsUserMessage).toHaveBeenCalled();
+    expect((await decideTurnOutcome(announced(reply, { turnIdx: 1 }))).terminalReason).toBe("done");
+  });
+
   it("(e3) it fires once per op — the second announcement ends the turn", async () => {
     expect((await decideTurnOutcome(announced("Let me search the workspace."))).terminalReason).toBe(null);
     const second = await decideTurnOutcome(announced("Let me search the workspace.", { turnIdx: 1 }));

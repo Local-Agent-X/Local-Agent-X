@@ -11,6 +11,7 @@
  * continuation guard + gate chain settle (re-checked against terminalReason so a
  * re-opened turn never commits a stale terminal). No parallel decision path.
  */
+import { namedNextStep, namedNextStepNudge } from "./named-next-step.js";
 import { randomUUID } from "node:crypto";
 import type { CommitTurnMessage } from "../checkpoint.js";
 import { publishStreamChunk } from "../event-emitter.js";
@@ -142,9 +143,19 @@ export function redriveAnnouncedOnlyTurn(in_: AnnouncedOnlyTurnInput): boolean {
   if (op.lane !== "interactive") return false;
   // Called on EVERY interactive turn so the op's own tool history is tracked
   // here rather than threaded through the turn input.
-  const state = getMiddlewareState(op.id, ANNOUNCED_ONLY_TURN_KEY, () => ({ used: false, sawTool: false }));
+  const state = getMiddlewareState(op.id, ANNOUNCED_ONLY_TURN_KEY, () => ({ used: false, sawTool: false, namedStepUsed: false }));
   if (toolCalls.length > 0) { state.sawTool = true; return false; }
-  if (state.sawTool || state.used || userMessageWaiting(op)) return false;
+  if (state.used || userMessageWaiting(op)) return false;
+  // A full reply that ends the turn on a step the agent would take itself
+  // (named-next-step.ts): once per op, whether or not it has run tools.
+  const step = !state.namedStepUsed && !isAnnouncedOnlyReply(assistantText) ? namedNextStep(assistantText) : null;
+  if (step) {
+    const pushed = appendNudgeAsUserMessage(op.id, in_.turnIdx + 1, namedNextStepNudge(step),
+      { name: "announced-only", reason: "named-next-step", outcome: "nudge" });
+    if (pushed) state.namedStepUsed = true;
+    return pushed;
+  }
+  if (state.sawTool) return false;
   if (!isAnnouncedOnlyReply(assistantText)) return false;
   const nudged = appendNudgeAsUserMessage(op.id, in_.turnIdx + 1, ANNOUNCED_ONLY_NUDGE,
     { name: "announced-only", reason: "announced-only", outcome: "nudge" });

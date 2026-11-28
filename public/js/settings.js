@@ -176,7 +176,9 @@ const SETTINGS_ICONS = {
   whatsapp:     '<path d="M5 5h14v9H9l-4 4z"/>',
   mobile:       '<rect x="7" y="3" width="10" height="18" rx="2"/><path d="M10.5 18h3"/>',
   integrations: '<path d="M14.7 6.3a3.5 3.5 0 0 0-4.6 4.6l-5.8 5.8 2.5 2.5 5.8-5.8a3.5 3.5 0 0 0 4.6-4.6l-2.4 2.4-2-2z"/>',
-  sync:         '<path d="M19 8a7 7 0 0 0-12-3L4 8M5 16a7 7 0 0 0 12 3l3-3"/><path d="M4 4v4h4M20 20v-4h-4"/>'
+  sync:         '<path d="M19 8a7 7 0 0 0-12-3L4 8M5 16a7 7 0 0 0 12 3l3-3"/><path d="M4 4v4h4M20 20v-4h-4"/>',
+  brands:       '<path d="M3.5 12.5V4.5a1 1 0 0 1 1-1h8l8 8a1.4 1.4 0 0 1 0 2l-7 7a1.4 1.4 0 0 1-2 0z"/><circle cx="8.5" cy="8.5" r="1.5"/>',
+  hq:           '<path d="M4 21h16"/><path d="M6 21V5a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1v16"/><path d="M15 10h3a1 1 0 0 1 1 1v10"/><path d="M9 8h3M9 11.5h3M9 15h3"/>'
 };
 function injectSettingsIcons() {
   document.querySelectorAll('.settings-nav .tab-pill[data-tab]').forEach(btn => {

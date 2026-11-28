@@ -166,6 +166,20 @@ export const PRUNE_KEEP_TOOL_ROUNDS = 6;
 export const PRUNE_BATCH_MIN_RECLAIM_TOKENS = 16_384;
 export const PRUNE_MIN_RESULT_CHARS = 1_500;
 
+/**
+ * How full the window must be, in percent, before a new prune batch is taken:
+ * halfway to "Compact at". Below it the model keeps every result it gathered.
+ * A stub made at a small fraction of a large window bought nothing and cost
+ * the work back: on a 949k window an op stubbed at ~15% full, re-read the same
+ * three source files and its 56 KB spec, and rewrote ~94k tokens of cache over
+ * three batches (glasses build, 2026-11-27). On a small local window the batch
+ * floor above already held pruning past about half full, so this line moves
+ * nothing there.
+ */
+export function toolRoundPruneAtPercent(compactAt: number = compactAtPercent()): number {
+	return Math.floor(compactAt / 2);
+}
+
 // ─── Manual compaction keep count (consumed by routes/chat/compact-route.ts) ─
 
 /**

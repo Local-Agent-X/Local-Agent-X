@@ -1,3 +1,4 @@
+import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { ServerEvent } from "../../../types.js";
 import { safeErrorMessage } from "../../../server-utils.js";
 import { createLogger } from "../../../logger.js";
@@ -122,6 +123,37 @@ function keepBoundFolder(session: Session, ctx: RunChatTurnArgs["ctx"]): void {
 /** The "after each chat" sync interval: a turn that ran is the only thing that pushes when a chat ends. */
 function queueAfterChatSync(ctx: RunChatTurnArgs["ctx"]): void {
   try { ctx.agentSync.onChatEnd(); } catch (e) { logger.warn(`[sync] after-chat push not queued: ${(e as Error).message}`); }
+}
+
+/**
+ * The history a resume turn is sent after a prior turn was replaced. That turn
+ * just salvaged its committed work into session.messages (tryAcquireOrReplace
+ * awaited its completion before returning), while the prepared request
+ * snapshotted history before that await, before the lock. Refreshing it lets
+ * THIS resume turn see what the interrupted turn did instead of re-deriving
+ * it: the same-instant "keep going" race; the common stop→read→resume path
+ * was already covered by the salvage landing before the resume's prepare.
+ *
+ * Same shape the turn was prepared with: sanitize, then the session's
+ * checkpoint, sized to the same window. Deliberately does NOT compute a new
+ * checkpoint: a resume is mid-turn, and a fresh summary here would re-shape
+ * the prefix the interrupted turn already sent. Null when the refresh fails;
+ * the caller keeps what it had.
+ */
+async function historyAfterSalvage(session: Session, model: string): Promise<ChatCompletionMessageParam[] | null> {
+  try {
+    const { sanitizeHistory } = await import("../../../providers/sanitize.js");
+    const { applyCheckpoint } = await import("../../../context-manager/checkpoint-history.js");
+    const { effectiveContextWindow } = await import("../../../context-manager/effective-window.js");
+    return applyCheckpoint(
+      sanitizeHistory(session.messages as Parameters<typeof sanitizeHistory>[0]),
+      session.compactionCheckpoint,
+      effectiveContextWindow(model),
+    );
+  } catch (e) {
+    logger.warn(`[turn-lock] cleanHistory refresh after replace failed: ${(e as Error).message}`);
+    return null;
+  }
 }
 
 export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
@@ -347,27 +379,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
     announceProvider();
     if (decision.reason === "aborted-non-committing") {
       logger.info(`[turn-lock] aborted prior non-committing turn for sess=${sessionId} (was ${decision.previous?.elapsedMs}ms in, iter=${decision.previous?.iteration})`);
-      // The prior turn just salvaged its committed work into session.messages
-      // (tryAcquireOrReplace awaited its completion before returning). `prepared`
-      // snapshotted history BEFORE that await — at line ~116, before the lock —
-      // so refresh cleanHistory from the now-current session so THIS resume turn
-      // sees what the interrupted turn did instead of re-deriving it. Closes the
-      // same-instant "keep going" race; the common stop→read→resume path was
-      // already covered by the salvage landing before the resume's prepare.
-      try {
-        const { sanitizeHistory } = await import("../../../providers/sanitize.js");
-        const { applyCheckpoint } = await import("../../../context-manager/checkpoint-history.js");
-        // Same shape the turn was prepared with: sanitize, then the session's
-        // checkpoint. Deliberately does NOT compute a new checkpoint — a resume
-        // is mid-turn, and a fresh summary here would re-shape the prefix the
-        // interrupted turn already sent.
-        prepared.cleanHistory = applyCheckpoint(
-          sanitizeHistory(session.messages as Parameters<typeof sanitizeHistory>[0]),
-          session.compactionCheckpoint,
-        );
-      } catch (e) {
-        logger.warn(`[turn-lock] cleanHistory refresh after replace failed: ${(e as Error).message}`);
-      }
+      prepared.cleanHistory = await historyAfterSalvage(session, prepared.model) ?? prepared.cleanHistory;
     }
 
     // Lock is held — now it's safe to register the chat (startChat) and stream.

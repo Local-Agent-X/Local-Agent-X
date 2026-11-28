@@ -85,3 +85,32 @@ describe("deciding when to checkpoint", () => {
     expect(out.messages).toHaveLength(60);
   });
 });
+
+describe("tool output from finished turns", () => {
+  // read a file, answer, then two more messages: the read is two turns back.
+  const FILE = "y".repeat(20_000); // ~5.7k tokens
+  const withRead = (): ChatCompletionMessageParam[] => [
+    { role: "user", content: "what does parser.ts do?" },
+    { role: "assistant", content: "", tool_calls: [{ id: "c1", type: "function", function: { name: "read", arguments: "{}" } }] },
+    { role: "tool", tool_call_id: "c1", content: FILE },
+    { role: "assistant", content: "It parses." },
+    { role: "user", content: "and the tests?" },
+    { role: "assistant", content: "They cover it." },
+    { role: "user", content: "now change it" },
+  ] as ChatCompletionMessageParam[];
+
+  it("stays whole while the conversation is a small part of the window, so nothing is read twice", async () => {
+    const out = await checkpointedHistory(withRead(), {}, 949_000);
+    expect(out.messages[2].content).toBe(FILE);
+  });
+
+  it("is stubbed once the conversation is past the prune line", async () => {
+    const out = await checkpointedHistory(withRead(), {}, 10_000); // ~6k of 10k: past 45%, under the 75% checkpoint
+    expect(out.newCheckpoint).toBeUndefined();
+    expect(String(out.messages[2].content)).toMatch(/^\[earlier tool result elided — read/);
+  });
+
+  it("a caller with no window keeps the old rule: stubbed at any size", () => {
+    expect(String(applyCheckpoint(withRead(), undefined)[2].content)).toMatch(/^\[earlier tool result elided/);
+  });
+});

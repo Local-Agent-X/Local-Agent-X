@@ -11,7 +11,8 @@
  * disk and the command can run again. User and assistant rows stay verbatim.
  *
  * The stub boundary is pinned per op and moves only when moving it reclaims at
- * least PRUNE_BATCH_MIN_RECLAIM_TOKENS. Stubbing only ever moves forward, so
+ * least PRUNE_BATCH_MIN_RECLAIM_TOKENS and the view is past the fill line the
+ * caller checks (toolRoundPruneAtPercent): until then nothing is stubbed. Stubbing only ever moves forward, so
  * every row before the old boundary is byte-identical from one turn to the next
  * and a provider's prefix cache (a local runtime's KV cache) survives up to it:
  * a batch costs a re-read of the stretch it changed, not of the whole view.
@@ -99,12 +100,23 @@ function pin(opId: string, messageId: string): void {
  * batch, 19-28% of two chats' cache writes (2026-11-01); a breakpoint here
  * lets the next batch read everything before it back.
  */
-export function pruneToolRounds(messages: CanonicalMessage[], opId?: string): { messages: CanonicalMessage[]; changed: boolean; frontierMessageId?: string } {
+export function pruneToolRounds(
+  messages: CanonicalMessage[],
+  opId?: string,
+  // Whether the view, with the boundary where it is now, is full enough for a
+  // new batch (compactHistory: past toolRoundPruneAtPercent of the window). A
+  // boundary already pinned is applied either way, so the cached prefix holds.
+  fullEnough: (view: CanonicalMessage[]) => boolean = () => true,
+): { messages: CanonicalMessage[]; changed: boolean; frontierMessageId?: string } {
   const pinnedId = opId ? pinnedBoundary.get(opId) : undefined;
   const pinnedAt = pinnedId ? messages.findIndex((m) => m.messageId === pinnedId) : -1;
   const target = keepBoundary(messages);
   let boundary = pinnedAt;
-  if (target > Math.max(pinnedAt, 0) && reclaimable(messages, pinnedAt, target) >= PRUNE_BATCH_MIN_RECLAIM_TOKENS) {
+  if (
+    target > Math.max(pinnedAt, 0)
+    && reclaimable(messages, pinnedAt, target) >= PRUNE_BATCH_MIN_RECLAIM_TOKENS
+    && fullEnough(pinnedAt > 0 ? stubRows(messages, pinnedAt) : messages)
+  ) {
     boundary = target;
     if (opId) pin(opId, messages[target].messageId);
   }

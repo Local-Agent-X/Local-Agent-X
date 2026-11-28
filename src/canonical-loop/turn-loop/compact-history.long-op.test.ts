@@ -29,6 +29,8 @@ function op(rounds: number, resultChars: number): CanonicalMessage[] {
 }
 
 const text = (m: CanonicalMessage) => String((m.content as { text?: unknown }).text ?? "");
+const stubIds = (rows: CanonicalMessage[]) =>
+  rows.filter((m) => m.role === "tool_result" && isElidedToolResult(String((m.content as { result: unknown }).result))).map((m) => m.messageId);
 
 beforeEach(() => {
   _resetPrunedBoundaries();
@@ -37,12 +39,25 @@ beforeEach(() => {
 });
 
 describe("compactHistory on a long single-request op", () => {
-  it("stubs old tool output without a summary while the view is under Compact at", async () => {
-    const out = await compactHistory(op(10, 20_000), MODEL, null, "op-a");
+  it("stubs old tool output without a summary once the view is past the prune line", async () => {
+    // ~57k of tool output plus a 60k system prompt: past halfway to Compact at.
+    const out = await compactHistory(op(10, 20_000), MODEL, null, "op-a", 60_000);
     expect(out.compacted).toBe(true);
     expect(mockSummarize).not.toHaveBeenCalled();
-    const stubs = out.messages.filter((m) => m.role === "tool_result" && isElidedToolResult(String((m.content as { result: unknown }).result)));
-    expect(stubs.map((m) => m.messageId)).toEqual(["t0", "t1", "t2", "t3"]);
+    expect(stubIds(out.messages)).toEqual(["t0", "t1", "t2", "t3"]);
+  });
+
+  it("keeps every result whole while the window is mostly empty, so nothing has to be read twice", async () => {
+    const out = await compactHistory(op(10, 20_000), MODEL, null, "op-b"); // ~29% of the window
+    expect(out.compacted).toBe(false);
+    expect(stubIds(out.messages)).toEqual([]);
+    expect(out.cacheFrontierMessageId).toBeUndefined();
+  });
+
+  it("once a batch is pinned it holds even if the view later measures under the line", async () => {
+    await compactHistory(op(10, 20_000), MODEL, null, "op-c", 60_000);
+    const next = await compactHistory(op(11, 20_000), MODEL, null, "op-c");
+    expect(stubIds(next.messages)).toEqual(["t0", "t1", "t2", "t3"]);
   });
 
   it("past Compact at, the summary carries the task verbatim and a token-sized recent stretch", async () => {

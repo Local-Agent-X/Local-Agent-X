@@ -53,6 +53,20 @@ describe("pruneToolRounds", () => {
     expect(stubbed(later)).toEqual(["t0", "t1", "t2", "t3", "t4", "t5", "t6"]);
   });
 
+  it("takes no batch while the caller says the view is not full enough", () => {
+    const out = pruneToolRounds(op(10), "op1", () => false);
+    expect(out.changed).toBe(false);
+    expect(out.frontierMessageId).toBeUndefined();
+  });
+
+  it("asks about the view with the pinned boundary applied, and keeps that boundary when the answer is no", () => {
+    pruneToolRounds(op(10), "op1");
+    let asked: CanonicalMessage[] = [];
+    const out = pruneToolRounds(op(13), "op1", (view) => { asked = view; return false; });
+    expect(stubbed(asked)).toEqual(["t0", "t1", "t2", "t3"]);
+    expect(stubbed(out.messages)).toEqual(["t0", "t1", "t2", "t3"]);
+  });
+
   it("keeps a short result whole: an error line says more than its stub would", () => {
     const out = pruneToolRounds(op(12, 400), "op1");
     expect(out.changed).toBe(false);

@@ -13,7 +13,7 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 import type { CanonicalMessage } from "../contract-types.js";
 import type { LastTurnUsage } from "../op-usage.js";
 import { getContextStatus } from "../../context-manager/status.js";
-import { turnCompactionKeepLast, turnTailBudgetTokens } from "../../context-manager/compaction-policy.js";
+import { toolRoundPruneAtPercent, turnCompactionKeepLast, turnTailBudgetTokens } from "../../context-manager/compaction-policy.js";
 import { messageTokens } from "../../context-manager/token-estimation.js";
 import type { AnthropicTransport } from "../../context-manager/effective-window.js";
 import type { TokenAnchor } from "../../context-manager/token-estimation.js";
@@ -192,8 +192,9 @@ export interface CompactHistoryResult {
 }
 
 /**
- * The view for this turn: older rounds' tool output stubbed in batches
- * (prune-tool-rounds.ts), then, past "Compact at", the head summarized.
+ * The view for this turn: older rounds' tool output stubbed in batches once
+ * the view is past toolRoundPruneAtPercent (prune-tool-rounds.ts), then, past
+ * "Compact at", the head summarized.
  * Pruning first is what keeps a long tool loop out of the summarizer: the bulk
  * of an op is file dumps, and those come back by re-reading, not by summary.
  */
@@ -206,7 +207,11 @@ export async function compactHistory(
   sessionBacked = true,
   transport: AnthropicTransport = "cli",
 ): Promise<CompactHistoryResult> {
-  const pruned = pruneToolRounds(messages, opId);
+  const fullEnough = (view: CanonicalMessage[]) => {
+    const anchor = usage ? locateAnchor(view, usage) : null;
+    return getContextStatus(toChatParams(view), model, anchor ?? undefined, transport, baselineTokens).percentage >= toolRoundPruneAtPercent();
+  };
+  const pruned = pruneToolRounds(messages, opId, fullEnough);
   const result = await summarizeOverThreshold(pruned.messages, model, usage, opId, baselineTokens, sessionBacked, transport);
   const frontier = pruned.frontierMessageId;
   const kept = frontier !== undefined && result.messages.some((m) => m.messageId === frontier);

@@ -31,6 +31,7 @@ import {
   CHECKPOINT_KEEP_RECENT,
   CHECKPOINT_REFRESH_MIN_GROWTH,
   conversationBudgetShare,
+  toolRoundPruneAtPercent,
 } from "./compaction-policy.js";
 import { createLogger } from "../logger.js";
 
@@ -60,11 +61,35 @@ function summaryRow(summary: string): ChatCompletionMessageParam {
 export function applyCheckpoint(
   messages: ChatCompletionMessageParam[],
   checkpoint: { summary: string; coversThrough: number } | undefined,
+  // The window the view is sized for. Given, finished turns' tool output stays
+  // whole until the conversation is past toolRoundPruneAtPercent of it.
+  windowTokens?: number,
 ): ChatCompletionMessageParam[] {
-  const pruned = shortenSpentAppRequests(pruneFinishedTurnToolResults(messages));
+  const pruned = shortenSpentAppRequests(finishedTurnsPruned(messages, checkpoint, windowTokens));
   // Last, on the view: it changes the row count (noop-shell-calls.ts).
   if (!checkpoint || checkpoint.coversThrough <= 0 || checkpoint.coversThrough > pruned.length) return dropNoopShellCalls(pruned);
   return dropNoopShellCalls([summaryRow(checkpoint.summary), ...pruned.slice(checkpoint.coversThrough)]);
+}
+
+/**
+ * Tool output from finished turns, stubbed only once the conversation (what is
+ * left after the checkpoint) is past toolRoundPruneAtPercent of the window.
+ * Stubbing it from the second message on, at any fill, made the model re-read
+ * a file it read one message earlier; the same rule as inside one op
+ * (canonical-loop/turn-loop/prune-tool-rounds.ts). The view stays a function
+ * of the history and the window, so the prefix changes only when the line is
+ * crossed or a checkpoint is cut. Without a window: stubbed, as before.
+ */
+function finishedTurnsPruned(
+  messages: ChatCompletionMessageParam[],
+  checkpoint: { summary: string; coversThrough: number } | undefined,
+  windowTokens: number | undefined,
+): ChatCompletionMessageParam[] {
+  if (windowTokens === undefined) return pruneFinishedTurnToolResults(messages);
+  const covered = checkpoint && checkpoint.coversThrough > 0 && checkpoint.coversThrough <= messages.length;
+  const view = covered ? [summaryRow(checkpoint.summary), ...messages.slice(checkpoint.coversThrough)] : messages;
+  const due = totalTokens(view) >= windowTokens * (toolRoundPruneAtPercent() / 100);
+  return due ? pruneFinishedTurnToolResults(messages) : messages;
 }
 
 /**
@@ -79,7 +104,7 @@ export async function checkpointedHistory(
   modelWindowTokens: number,
 ): Promise<CheckpointedHistory> {
   const existing = session.compactionCheckpoint;
-  const applied = applyCheckpoint(messages, existing);
+  const applied = applyCheckpoint(messages, existing, modelWindowTokens);
   const budget = Math.floor(modelWindowTokens * conversationBudgetShare());
   if (budget <= 0 || totalTokens(applied) <= budget) return { messages: applied };
 
@@ -102,5 +127,5 @@ export async function checkpointedHistory(
   }
   const checkpoint = { summary, coversThrough };
   logger.info(`checkpointed ${coversThrough} messages (tail ${messages.length - coversThrough})`);
-  return { messages: applyCheckpoint(messages, checkpoint), newCheckpoint: checkpoint };
+  return { messages: applyCheckpoint(messages, checkpoint, modelWindowTokens), newCheckpoint: checkpoint };
 }

@@ -160,6 +160,10 @@ export const LAX_DATA_CATALOG: readonly LaxDataEntry[] = [
   ...at("card", "holds your saved brands, the looks applied to the documents made for each company", "brands"),
   ...at("card", SETTINGS, "bridge-voice-prefs.json", "office-theme.json", "office-theme.json.migrated", "deck-designs.json", "tool-timeouts.json", "model-capabilities.json",
     "model-profiles", "local-context-sizing.json", "local-model-certifications.json", "session-model-pins.json", "session-worktrees.json"),
+  // The tools each chat has loaded, in the order it loaded them
+  // (agent-request/prepare-request/session-tool-memory.ts): read back at the
+  // chat's next turn to send it the same tool list.
+  ...at("card", "holds which tools each chat has loaded, which it is sent again at its next turn", "session-tools"),
   // What agents working in parallel tell each other (agency/work-claims.ts,
   // handover-notes.ts): read back into their prompts and their write checks.
   ...at("card", "holds what your agents tell each other about the work each is doing, which they read back", "coordination"),

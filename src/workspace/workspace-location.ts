@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { platformRoot } from "../platform-root.js";
-import { onDiskPath } from "../security/layer/install-root.js";
+import { onDiskPath } from "../security/layer/on-disk-name.js";
 import { pathIsWithin } from "../security/layer/path-within.js";
 
 /**

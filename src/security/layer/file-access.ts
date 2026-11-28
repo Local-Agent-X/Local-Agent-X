@@ -5,7 +5,8 @@ import type { FileAccessMode } from "./types.js";
 import type { PathArgSpec } from "../../tool-registry.js";
 import { classifySensitivePath, isDotenvFile } from "./sensitive-paths.js";
 import { SYSTEM_DIR_PATTERNS } from "./catastrophic-paths.js";
-import { isLaxControlFile, isAppAtRestSecretUnderLax, onDiskSpelling } from "./lax-control-files.js";
+import { isLaxControlFile, isAppAtRestSecretUnderLax } from "./lax-control-files.js";
+import { onDiskPath } from "./on-disk-name.js";
 import { resolveAgentPathFrom, realpathDeep, sessionWorkRootOf } from "../../workspace/paths.js";
 import { getLaxDir } from "../../lax-data-dir.js";
 import { pathIsWithin } from "./path-within.js";
@@ -408,12 +409,12 @@ function sensitivePathRefusal(resolved: string, realPath: string, action: string
  * gives it, or null. A path can reach a credential file without spelling it:
  * by an 8.3 short name (`AWS~1\credentials`), a stream suffix, a trailing dot
  * a shell drops (`.aws.\credentials`), or another casing on a volume that
- * ignores case. onDiskSpelling names the file each of those opens. No read is
+ * ignores case. onDiskPath names the file each of those opens. No read is
  * let through here: the two exceptions the gate makes are for a file asked for
  * by its own name.
  */
 export function sensitiveOnDisk(path: string): ReturnType<typeof matchesSensitivePath> {
-  const onDisk = onDiskSpelling(path);
+  const onDisk = onDiskPath(path);
   return matchesSensitivePath(process.platform === "win32" ? onDisk.toLowerCase() : onDisk);
 }
 

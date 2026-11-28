@@ -47,61 +47,11 @@
  * access does not mean "may rewrite my own permissions".
  */
 
-import { realpathSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { resolve } from "node:path";
 import { isAppAtRestSecretBasename, isContainerSecretsMountPath, isProjectedSecretsRelPath } from "../secrets/known-secrets.js";
 import { getLaxDir } from "../../lax-data-dir.js";
 import { LAX_DATA_CATALOG, UNLISTED_LAX_NOTE, laxDataEntry } from "./lax-data-catalog.js";
-
-/**
- * The spelling the filesystem itself gives `p`, so a classifier sees the file
- * a write would reach. NTFS answers to more names than the one on disk: an
- * 8.3 short name for any segment (`LAX~1`, `HOOKS~1.JSO`) and a stream suffix
- * (`hooks.json::$DATA`, `.lax::$INDEX_ALLOCATION`). Node hands both to Windows
- * unchanged, so a write by either lands on the real file, while the JS
- * realpath (realpathDeep) keeps the spelling as typed. The native realpath
- * names every segment that exists by its long name. A stream suffix is
- * stripped first because a write to a file that does not exist yet creates
- * it, and then there is nothing on disk for the native call to name. Trailing
- * dots and spaces go too (win32OpenedName): a shell opens `hooks.json.` as
- * `hooks.json`.
- */
-export function onDiskSpelling(p: string): string {
-  const start = process.platform === "win32" ? win32OpenedName(resolve(p)) : resolve(p);
-  let cur = start;
-  let tail = "";
-  for (;;) {
-    try {
-      const real = realpathSync.native(cur);
-      return tail ? join(real, tail) : real;
-    } catch {
-      // A segment that does not exist yet (a new file) or cannot be opened is
-      // kept as typed, and its parent named instead.
-      const parent = dirname(cur);
-      if (parent === cur) return start;
-      tail = tail ? join(basename(cur), tail) : basename(cur);
-      cur = parent;
-    }
-  }
-}
-
-/** `C:\x\.lax::$INDEX_ALLOCATION\hooks.json::$DATA` → `C:\x\.lax\hooks.json`.
- *  A drive segment (`C:`) is the one place a colon belongs. */
-function withoutStreamSuffixes(p: string): string {
-  return p.split(/([\\/])/).map((seg) => (/^[a-z]:$/i.test(seg) ? seg : seg.replace(/:.*$/, ""))).join("");
-}
-
-/**
- * The name Windows opens for `p`: without stream suffixes, and without the
- * dots and spaces that end a segment. The Win32 layer drops those before it
- * looks a name up, so `.aws.\credentials` and `security.json.` reach
- * `.aws\credentials` and `security.json` from any program that does not ask
- * for a literal path, a shell among them. `.` and `..` are segments of their
- * own and are left alone.
- */
-export function win32OpenedName(p: string): string {
-  return withoutStreamSuffixes(p).split(/([\\/])/).map((seg) => (/^\.{1,2}$/.test(seg) ? seg : seg.replace(/[. ]+$/, ""))).join("");
-}
+import { onDiskPath } from "./on-disk-name.js";
 
 /** True when every path segment before the basename contains a `.lax` dir. */
 function underLaxDir(segs: string[]): boolean {
@@ -166,7 +116,7 @@ function belowConfiguredDataDir(p: string): string[] | null {
 /** Each spelling a classifier must judge `p` by: the file a write reaches
  *  first, so a card names it, then the spelling as given. */
 function spellings(p: string): string[] {
-  const onDisk = onDiskSpelling(p);
+  const onDisk = onDiskPath(p);
   return onDisk === p ? [p] : [onDisk, p];
 }
 

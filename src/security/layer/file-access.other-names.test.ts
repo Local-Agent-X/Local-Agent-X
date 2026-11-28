@@ -9,7 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { platformRoot } from "../../platform-root.js";
 import { evaluateFileAccess } from "./file-access.js";
 import { isProtectedInstallPath } from "./install-root.js";
-import { win32OpenedName } from "./lax-control-files.js";
+import { win32OpenedName } from "./on-disk-name.js";
 import { openValidatedRead } from "./validated-io.js";
 
 const WINDOWS = process.platform === "win32";

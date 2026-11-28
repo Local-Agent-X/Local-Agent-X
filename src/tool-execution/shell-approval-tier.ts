@@ -45,7 +45,7 @@ import { waitsForShellCommand } from "../tool-registry.js";
 // mirrors the read tool blocking these in ALL file-access modes (incl.
 // unrestricted, where the upstream shell-path-guard is a no-op).
 import { matchesSensitivePath } from "../security/layer/file-access.js";
-import { win32OpenedName } from "../security/layer/lax-control-files.js";
+import { win32OpenedName } from "../security/layer/on-disk-name.js";
 // argv[0] catalogs + env-name guard tables.
 import {
   SAFE_BINS,

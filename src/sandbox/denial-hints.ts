@@ -15,7 +15,8 @@
 import { join } from "node:path";
 import type { SandboxMode } from "./types.js";
 import { HOME_RELATIVE_DENY_DIRS, HOME_RELATIVE_DENY_FILES, GUARDED_SCOPE_EXEMPT_DIRS } from "./validate.js";
-import { INSTALL_CHANGE_ROUTE, installRootWriteRule, onDiskPath, type InstallRootRule } from "../security/layer/install-root.js";
+import { INSTALL_CHANGE_ROUTE, installRootWriteRule, type InstallRootRule } from "../security/layer/install-root.js";
+import { onDiskPath } from "../security/layer/on-disk-name.js";
 import { pathIsWithin } from "../security/layer/path-within.js";
 
 /**

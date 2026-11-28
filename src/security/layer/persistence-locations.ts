@@ -23,7 +23,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { onDiskSpelling } from "./lax-control-files.js";
+import { onDiskPath } from "./on-disk-name.js";
 import { userContentDirs } from "./file-access.js";
 import { pathIsWithin } from "./path-within.js";
 
@@ -163,13 +163,13 @@ export function persistenceLocationJudge(): PersistenceLocationOf {
   const roots = persistenceRoots();
   const named = PERSISTENCE_LOCATIONS.flatMap((loc) => {
     const bases = loc.base === "home" ? [roots.home] : loc.base === "documents" ? roots.documents : roots.appData;
-    return bases.map((base) => ({ loc, at: comparable(onDiskSpelling(join(base, ...loc.rel.split("/")))) }));
+    return bases.map((base) => ({ loc, at: comparable(onDiskPath(join(base, ...loc.rel.split("/")))) }));
   });
   for (const file of gitConfigIncludes(roots.home)) {
-    named.push({ loc: { base: "home", rel: file, kind: "file", runs: AT_GIT }, at: comparable(onDiskSpelling(file)) });
+    named.push({ loc: { base: "home", rel: file, kind: "file", runs: AT_GIT }, at: comparable(onDiskPath(file)) });
   }
   return (p) => {
-    const target = onDiskSpelling(p);
+    const target = onDiskPath(p);
     const key = comparable(target);
     const hit = named.find(({ loc, at }) => (loc.kind === "file" ? key === at : pathIsWithin(at, key)));
     return hit ? { path: target, runs: hit.loc.runs } : null;

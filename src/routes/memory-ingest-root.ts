@@ -10,13 +10,13 @@
  *
  * The folder is judged by what it is, not by how the path spells it: with
  * links followed (realpathDeep) and by the name the filesystem gives it
- * (onDiskSpelling), so an 8.3 short name (`AWS~1`), another casing or a
+ * (onDiskPath), so an 8.3 short name (`AWS~1`), another casing or a
  * trailing dot reaches the same refusal as the folder's own name.
  */
 import { sep } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
 import { matchesSensitivePath, pathIsWithin } from "../security/layer/file-access.js";
-import { onDiskSpelling } from "../security/layer/lax-control-files.js";
+import { onDiskPath } from "../security/layer/on-disk-name.js";
 import { realpathDeep } from "../workspace/paths.js";
 
 export type IngestRoot = { root: string } | { refused: "not-accessible" | "sensitive" };
@@ -28,11 +28,11 @@ export function resolveIngestRoot(path: string): IngestRoot {
   let dataDirs: string[];
   try {
     realRoot = realpathDeep(path);
-    dataDirs = [realpathDeep(getLaxDir()), onDiskSpelling(getLaxDir())].map(fold);
+    dataDirs = [realpathDeep(getLaxDir()), onDiskPath(getLaxDir())].map(fold);
   } catch {
     return { refused: "not-accessible" };
   }
-  for (const name of new Set([realRoot, onDiskSpelling(realRoot)])) {
+  for (const name of new Set([realRoot, onDiskPath(realRoot)])) {
     const folded = fold(name);
     if (matchesSensitivePath(folded.endsWith(sep) ? folded : folded + sep)) return { refused: "sensitive" };
     if (dataDirs.some((dir) => pathIsWithin(dir, folded))) return { refused: "sensitive" };

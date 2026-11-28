@@ -1,11 +1,10 @@
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { workspaceRoot } from "../../config.js";
 import { platformRoot } from "../../platform-root.js";
 import { portableRuntimeRoot, resolveWindowsShell, windowsShellInstallRoot } from "../../tools/shell-env.js";
-import { realpathDeep } from "../../workspace/paths.js";
-import { win32OpenedName } from "./lax-control-files.js";
+import { onDiskPath } from "./on-disk-name.js";
 import { pathIsWithin } from "./path-within.js";
 
 // The owner's rule (2026-10-02): the agent may not modify the folder Local
@@ -38,42 +37,6 @@ import { pathIsWithin } from "./path-within.js";
 // shell command runs. So is the folder the launcher picks the next runtime
 // from, not only the runtime in use: a newer node-v99.0.0-win-x64 planted
 // beside the running one is what the next server start runs on, uncaged.
-
-/**
- * The name the filesystem itself gives `p`, so the containment checks below
- * compare the folder a write would reach rather than the spelling it was
- * asked for. The JS realpath (realpathDeep) keeps an existing segment as
- * typed, and Windows opens the same folder under other names: an 8.3 short
- * name (`LOCAL-~1`), a stream suffix (`local-agent-x::$INDEX_ALLOCATION`) or
- * any casing. Case-insensitive macOS volumes accept any casing too, and there
- * a posix comparison is case-sensitive. The native realpath answers with the
- * name on disk for every segment that exists; a tail that does not exist yet
- * is kept as typed, less the trailing dots, spaces and stream suffixes Windows
- * drops when it opens a name (win32OpenedName). When the native call fails for any other reason (some
- * virtual drives refuse it) the JS realpath stands in, which can still throw
- * on a symlink cycle exactly as it does for the gate.
- */
-export function onDiskPath(p: string): string {
-  // The name Windows opens, before the filesystem is asked: a shell reaches
-  // the install through `local-agent-x.` (a trailing dot) as surely as through
-  // its real name, and the native call, which takes a path literally, would
-  // answer that no such folder exists.
-  const opened = process.platform === "win32" ? win32OpenedName(resolve(p)) : resolve(p);
-  let cur = opened;
-  let tail = "";
-  for (;;) {
-    try {
-      const real = realpathSync.native(cur);
-      return tail ? join(real, tail) : real;
-    } catch (e) {
-      const code = (e as NodeJS.ErrnoException).code;
-      const parent = dirname(cur);
-      if ((code !== "ENOENT" && code !== "ENOTDIR") || parent === cur) return realpathDeep(opened);
-      tail = tail ? join(basename(cur), tail) : basename(cur);
-      cur = parent;
-    }
-  }
-}
 
 /**
  * What an agent refused by this rule can do instead, said the same way by

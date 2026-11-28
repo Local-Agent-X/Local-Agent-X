@@ -43,7 +43,7 @@ export function pullBrainJsonFiles(dataDir: string, syncDir: string, config: Syn
   }
 }
 
-export function pullBrainDirs(dataDir: string, syncDir: string): void {
+export async function pullBrainDirs(dataDir: string, syncDir: string): Promise<void> {
   // Brain backup — directory trees.
   // Additive pull: locally-created run files (agent-runs/) and locally-
   // built dashboards (dashboards/) that haven't been pushed yet must
@@ -57,7 +57,7 @@ export function pullBrainDirs(dataDir: string, syncDir: string): void {
     if (!existsSync(remote)) continue;
     const local = join(dataDir, dir);
     try {
-      pullDir(remote, local, /* additiveOnly */ true);
+      await pullDir(remote, local, /* additiveOnly */ true);
       // Brands removed on another machine (push-files.ts writes these).
       if (dir === "brands") applyTombstones(brandTombstonePaths(dataDir, syncDir));
     } catch (e) {

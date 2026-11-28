@@ -29,53 +29,53 @@ afterEach(() => {
 });
 
 describe("pullDir — additiveOnly contract", () => {
-  it("additive: keeps local files missing from remote (the bug we just fixed)", () => {
+  it("additive: keeps local files missing from remote (the bug we just fixed)", async () => {
     writeFileSync(join(remote, "shared.json"), '{"shared": true}');
     writeFileSync(join(local, "shared.json"), '{"shared": true}');
     writeFileSync(join(local, "local-only.json"), '{"local": true}');
 
-    pullDir(remote, local, /* additiveOnly */ true);
+    await pullDir(remote, local, /* additiveOnly */ true);
 
     expect(existsSync(join(local, "local-only.json"))).toBe(true);
     expect(existsSync(join(local, "shared.json"))).toBe(true);
   });
 
-  it("destructive (legacy): wipes local files missing from remote", () => {
+  it("destructive (legacy): wipes local files missing from remote", async () => {
     writeFileSync(join(remote, "shared.json"), '{"shared": true}');
     writeFileSync(join(local, "shared.json"), '{"shared": true}');
     writeFileSync(join(local, "local-only.json"), '{"local": true}');
 
-    pullDir(remote, local, /* additiveOnly */ false);
+    await pullDir(remote, local, /* additiveOnly */ false);
 
     expect(existsSync(join(local, "local-only.json"))).toBe(false);
     expect(existsSync(join(local, "shared.json"))).toBe(true);
   });
 
-  it("additive: copies remote-only files into local", () => {
+  it("additive: copies remote-only files into local", async () => {
     writeFileSync(join(remote, "from-remote.json"), '{"from": "remote"}');
 
-    pullDir(remote, local, /* additiveOnly */ true);
+    await pullDir(remote, local, /* additiveOnly */ true);
 
     expect(existsSync(join(local, "from-remote.json"))).toBe(true);
     expect(readFileSync(join(local, "from-remote.json"), "utf-8")).toBe('{"from": "remote"}');
   });
 
-  it("additive: handles nested directories", () => {
+  it("additive: handles nested directories", async () => {
     mkdirSync(join(remote, "sub"));
     writeFileSync(join(remote, "sub", "from-remote.json"), '{"nested": true}');
     mkdirSync(join(local, "sub"));
     writeFileSync(join(local, "sub", "local-only.json"), '{"local-nested": true}');
 
-    pullDir(remote, local, /* additiveOnly */ true);
+    await pullDir(remote, local, /* additiveOnly */ true);
 
     expect(existsSync(join(local, "sub", "from-remote.json"))).toBe(true);
     expect(existsSync(join(local, "sub", "local-only.json"))).toBe(true);
   });
 
-  it("additive: a freshly-created local file with no remote counterpart isn't wiped", () => {
+  it("additive: a freshly-created local file with no remote counterpart isn't wiped", async () => {
     writeFileSync(join(local, "field-agent-1-justmade.json"), '{"status":"working"}');
 
-    pullDir(remote, local, /* additiveOnly */ true);
+    await pullDir(remote, local, /* additiveOnly */ true);
 
     expect(existsSync(join(local, "field-agent-1-justmade.json"))).toBe(true);
   });

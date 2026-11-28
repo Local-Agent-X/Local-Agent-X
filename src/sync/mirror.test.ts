@@ -102,7 +102,7 @@ describe("mirrorDir (async, non-blocking workspace copy)", () => {
     expect((join(dest, ...Array(depth + 1).fill(seg))).length).toBeGreaterThan(240);
   });
 
-  it("pullDir applies the same skip rules and never deletes local dirs it skipped", () => {
+  it("pullDir applies the same skip rules and never deletes local dirs it skipped", async () => {
     root = mkdtempSync(join(tmpdir(), "lax-mirror-"));
     const src = join(root, "sync-repo-ws");
     const dest = join(root, "workspace");
@@ -115,7 +115,7 @@ describe("mirrorDir (async, non-blocking workspace copy)", () => {
     mkdirSync(join(dest, ".worktrees", "local"), { recursive: true });
     writeFileSync(join(dest, ".worktrees", "local", "mine.md"), "mine");
 
-    pullDir(src, dest, /* additiveOnly */ false);
+    await pullDir(src, dest, /* additiveOnly */ false);
     expect(readFileSync(join(dest, "real.md"), "utf-8")).toBe("real");
     expect(existsSync(join(dest, ".worktrees", "c4"))).toBe(false);
     expect(readFileSync(join(dest, ".worktrees", "local", "mine.md"), "utf-8")).toBe("mine");
@@ -183,12 +183,12 @@ describe("the build engine's own files are never synced", () => {
     expect(existsSync(join(app, "README.md"))).toBe(true);
   });
 
-  it("a pull never writes one back, though the project has none and the mirror's is newer", () => {
+  it("a pull never writes one back, though the project has none and the mirror's is newer", async () => {
     root = mkdtempSync(join(tmpdir(), "lax-engine-state-"));
     project(join(root, "mirror"));
     const local = join(root, "ws", "apps", "label-check");
     mkdirSync(local, { recursive: true });
-    pullDir(join(root, "mirror"), join(root, "ws"), true);
+    await pullDir(join(root, "mirror"), join(root, "ws"), true);
     for (const f of engineFiles) expect(existsSync(join(local, f)), f).toBe(false);
     expect(readFileSync(join(local, "README.md"), "utf-8")).toBe("mine");
   });

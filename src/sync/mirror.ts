@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { lstat, mkdir, readdir, readFile, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { extname, join, relative, resolve } from "node:path";
 
@@ -136,11 +136,16 @@ export async function pruneUnsyncedEntries(root: string): Promise<string[]> {
  *
  * Used additively for workspace pulls; legacy/destructive for older
  * pull paths that still rely on it (none currently — kept for safety).
+ *
+ * Async for the reason mirrorDir is. A pull visits every entry of the mirror
+ * whether or not anything changed, and the server pulls as it starts: walked
+ * synchronously, a mirror of 24,694 entries held the event loop for 6.6 s of
+ * one start (2026-11-28), with nothing to copy.
  */
-export function pullDir(src: string, dest: string, additiveOnly = false): void {
-  if (!existsSync(dest)) mkdirSync(dest, { recursive: true });
+export async function pullDir(src: string, dest: string, additiveOnly = false): Promise<void> {
+  await mkdir(dest, { recursive: true });
   const remoteEntries = new Set<string>();
-  for (const entry of readdirSync(src)) {
+  for (const entry of await readdir(src)) {
     // Present-in-remote is recorded even for entries the guards below skip:
     // a skipped entry must read as "exists remotely, not copied", never as
     // "deleted remotely" (legacy destructive mode deletes on that signal).
@@ -152,26 +157,28 @@ export function pullDir(src: string, dest: string, additiveOnly = false): void {
     // by a machine running pre-guard code must not propagate junk here), and
     // never write back a build's run record: the copy is from whenever it was
     // last pushed, and a pull that restored it re-opened a finished build.
-    const stat = lstatSync(srcPath);
-    if (stat.isSymbolicLink() || isEngineStateEntry(entry, stat.isDirectory())) continue;
+    const st = await lstat(srcPath);
+    if (st.isSymbolicLink() || isEngineStateEntry(entry, st.isDirectory())) continue;
     if (destPath.length > MAX_DEST_PATH) {
       logger.warn(`[sync] skipping pull of ${srcPath}: dest path ${destPath.length} chars exceeds git-safe limit ${MAX_DEST_PATH}`);
       continue;
     }
-    if (stat.isDirectory()) {
-      if (!SKIP_DIRS.has(entry)) pullDir(srcPath, destPath, additiveOnly);
-    } else if (stat.isFile()) {
-      if (!existsSync(destPath) || lstatSync(destPath).mtimeMs < stat.mtimeMs) writeFileSync(destPath, readFileSync(srcPath));
+    if (st.isDirectory()) {
+      if (!SKIP_DIRS.has(entry)) await pullDir(srcPath, destPath, additiveOnly);
+    } else if (st.isFile()) {
+      // No local copy reads as older than any mirror copy.
+      const local = await lstat(destPath).catch(() => null);
+      if (!local || local.mtimeMs < st.mtimeMs) await writeFile(destPath, await readFile(srcPath));
     }
   }
   if (!additiveOnly) {
     // Legacy: delete local entries removed from sync repo. NOT used for
     // workspace anymore (see applyTombstones).
-    for (const entry of readdirSync(dest)) {
+    for (const entry of await readdir(dest)) {
       if (!remoteEntries.has(entry)) {
         const p = join(dest, entry);
         logger.info(`[sync] Deleting ${relative(resolve("workspace"), p)} (removed from remote)`);
-        if (lstatSync(p).isDirectory()) rmSync(p, { recursive: true, force: true }); else unlinkSync(p);
+        if ((await lstat(p)).isDirectory()) await rm(p, { recursive: true, force: true }); else await unlink(p);
       }
     }
   }

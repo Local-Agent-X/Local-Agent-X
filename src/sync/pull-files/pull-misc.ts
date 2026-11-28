@@ -93,6 +93,9 @@ export async function pullSessions(dataDir: string, syncDir: string, config: Syn
     // from an older machine still works; the SessionStore migration
     // on next boot converts any pulled .json to .jsonl.
     if (f.startsWith(".") || !(f.endsWith(".jsonl") || f.endsWith(".json"))) continue;
+    // One chat costs a few file checks at least, and a machine holds thousands:
+    // the server gets a turn between chats, before either copy is looked at.
+    await yieldEventLoop();
     if (existsSync(join(archiveDir, f))) continue;
     const local = join(sessDir, f);
     const remote = join(syncSessDir, f);
@@ -102,8 +105,6 @@ export async function pullSessions(dataDir: string, syncDir: string, config: Syn
       const now = stampOf(remote, local);
       // Neither copy has changed since the mirror's was last found not ahead.
       if (sameStamp(before[f], now)) { after[f] = now; continue; }
-      // Comparing contents reads both copies: the server gets a turn first.
-      await yieldEventLoop();
       if (!sessionLogIsAhead(remote, local)) { after[f] = now; continue; }
     }
     writeFileSync(local, readFileSync(remote, "utf-8"));
@@ -114,7 +115,7 @@ export async function pullSessions(dataDir: string, syncDir: string, config: Syn
   return pulled;
 }
 
-export function pullWorkspaceOrProtocols(dataDir: string, syncDir: string, config: SyncConfig): void {
+export async function pullWorkspaceOrProtocols(dataDir: string, syncDir: string, config: SyncConfig): Promise<void> {
   if (config.syncWorkspace) {
     const syncWs = join(syncDir, "workspace");
     const ws = workspaceRoot();
@@ -122,7 +123,7 @@ export function pullWorkspaceOrProtocols(dataDir: string, syncDir: string, confi
       if (!existsSync(ws)) mkdirSync(ws, { recursive: true });
       // Workspace pull is additive-only — files only get copied IN, never
       // deleted by missing-from-remote. Deletions go through tombstones.
-      pullDir(syncWs, ws, /* additiveOnly */ true);
+      await pullDir(syncWs, ws, /* additiveOnly */ true);
       applyTombstones(tombstonePaths(dataDir, syncDir));
     }
   } else if (config.syncProtocols) {
@@ -134,7 +135,7 @@ export function pullWorkspaceOrProtocols(dataDir: string, syncDir: string, confi
       const ws = workspaceRoot();
       const localProto = join(ws, "protocols");
       if (!existsSync(localProto)) mkdirSync(localProto, { recursive: true });
-      pullDir(syncProto, localProto, /* additiveOnly */ true);
+      await pullDir(syncProto, localProto, /* additiveOnly */ true);
     }
   }
 }

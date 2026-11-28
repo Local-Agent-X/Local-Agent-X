@@ -39,7 +39,7 @@ export async function copyFromSync(dataDir: string, syncDir: string, config: Syn
   await pullSidebarPins(dataDir, syncDir);
   const pulledSessionIds = await pullSessions(dataDir, syncDir, config);
   const erasedSessionIds = config.syncSessions ? erasedLocalSessionIds(dataDir, syncDir) : [];
-  pullWorkspaceOrProtocols(dataDir, syncDir, config);
+  await pullWorkspaceOrProtocols(dataDir, syncDir, config);
   const missionProfilesDropped = pullCronJobs(dataDir, syncDir, config);
   pullBrainJsonFiles(dataDir, syncDir, config);
   await pullAgentProjects(dataDir, syncDir);
@@ -47,7 +47,7 @@ export async function copyFromSync(dataDir: string, syncDir: string, config: Syn
   pullTasks(dataDir, syncDir);
   pullCalendar(dataDir, syncDir);
   pullCustomMissions(dataDir, syncDir);
-  pullBrainDirs(dataDir, syncDir);
+  await pullBrainDirs(dataDir, syncDir);
   pullBrainBinaryFiles(dataDir, syncDir);
 
   // Facts DB sync (cross-machine knowledge propagation). Runs LAST so any

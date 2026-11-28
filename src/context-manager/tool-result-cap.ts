@@ -36,6 +36,21 @@ import { OUTPUT_RESERVE_TOKENS, PROMPT_WINDOW_SHARE } from "./request-fit.js";
  *  phase cuts it here (tools/result-spill.ts capWithSpill). */
 export const DEFAULT_MAX_RESULT_CHARS = 50_000;
 
+/** A file `read` may return up to 25,000 tokens: a 56 KB spec came back in
+ *  three reads under the general ceiling, and was then grepped piece by piece
+ *  (glasses build, 2026-11-27). The file is the source, so a bigger file still
+ *  continues by offset (read-budget.ts). */
+export const READ_MAX_RESULT_CHARS = 87_500;
+
+/** Shell output is kept to 30,000 chars; a longer run is spilled to disk with
+ *  a preview (tools/result-spill.ts). A build log's useful lines are its last
+ *  ones, and the rest stays one read away. */
+export const SHELL_MAX_RESULT_CHARS = 30_000;
+
+/** The most one delivered result can hold. A gate that fingerprints "what the
+ *  model saw" (sensitive-read-taint.ts) covers this much. */
+export const MAX_DELIVERED_RESULT_CHARS = Math.max(DEFAULT_MAX_RESULT_CHARS, READ_MAX_RESULT_CHARS, SHELL_MAX_RESULT_CHARS);
+
 /** Never squeeze a single result below this — a cap smaller than a screen of
  *  text makes every read/grep/shell result useless and the model just re-calls
  *  the tool. At this size the spill-to-disk preview still tells the model where
@@ -60,18 +75,20 @@ const CHARS_PER_TOKEN = 3.5;
  * Chars one tool result may occupy in a model whose window is `windowTokens`.
  * `toolTokens` is the measured manifest (request-fit.ts toolManifestTokens)
  * when the caller has the tools it sent; otherwise the documented allowance.
- * Monotonic in the window, clamped to [MIN_RESULT_CAP_CHARS,
- * DEFAULT_MAX_RESULT_CHARS].
+ * Monotonic in the window, clamped to [MIN_RESULT_CAP_CHARS, ceilingChars]:
+ * the tool's own ceiling (READ_MAX_RESULT_CHARS, SHELL_MAX_RESULT_CHARS, or
+ * the general DEFAULT_MAX_RESULT_CHARS).
  */
 export function toolResultCapChars(
   windowTokens: number,
   toolTokens: number = DEFAULT_TOOL_MANIFEST_TOKENS,
   outputReserveTokens: number = OUTPUT_RESERVE_TOKENS,
+  ceilingChars: number = DEFAULT_MAX_RESULT_CHARS,
 ): number {
-  if (!Number.isFinite(windowTokens) || windowTokens <= 0) return DEFAULT_MAX_RESULT_CHARS;
+  if (!Number.isFinite(windowTokens) || windowTokens <= 0) return ceilingChars;
   const promptTokens = Math.floor(windowTokens * PROMPT_WINDOW_SHARE);
   const messageTokens = windowTokens - promptTokens - toolTokens - outputReserveTokens;
   const resultTokens = Math.floor(messageTokens * RESULT_SHARE_OF_MESSAGES);
   const chars = Math.floor(resultTokens * CHARS_PER_TOKEN);
-  return Math.min(DEFAULT_MAX_RESULT_CHARS, Math.max(MIN_RESULT_CAP_CHARS, chars));
+  return Math.min(ceilingChars, Math.max(MIN_RESULT_CAP_CHARS, chars));
 }

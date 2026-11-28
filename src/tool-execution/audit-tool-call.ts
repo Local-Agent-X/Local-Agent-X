@@ -22,7 +22,8 @@ import { mediaRefOf, toolMessage } from "./tool-message-carry.js";
 import { buildDenyReason, restrictedCall } from "../tool-policy/packs/threat-engine-pack.js";
 import { resolveContextWindow } from "../context-manager/model-windows.js";
 import { toolManifestTokens } from "../context-manager/request-fit.js";
-import { DEFAULT_MAX_RESULT_CHARS, toolResultCapChars } from "../context-manager/tool-result-cap.js";
+import { DEFAULT_MAX_RESULT_CHARS, READ_MAX_RESULT_CHARS, SHELL_MAX_RESULT_CHARS, toolResultCapChars } from "../context-manager/tool-result-cap.js";
+import { waitsForShellCommand } from "../tool-registry.js";
 import { resolveOutputReserve } from "../context-manager/output-reserve.js";
 import { readOp } from "../ops/op-store.js";
 import { resolveOpModel } from "../canonical-loop/public/op-facts.js";
@@ -152,23 +153,34 @@ export function applyBudget(ctx: ToolCallContext): void {
 // included) so a 60-tool local session reserves what it actually spends; a
 // bare dispatch with no map falls back to the documented allowance.
 function resultCapChars(ctx: ToolCallContext): number {
-  if (!ctx.operationId) return DEFAULT_MAX_RESULT_CHARS;
+  const ceiling = resultCeilingChars(ctx);
+  if (!ctx.operationId) return ceiling;
   try {
     const op = readOp(ctx.operationId);
     const model = op ? resolveOpModel(op) : undefined;
-    if (!model) return DEFAULT_MAX_RESULT_CHARS;
+    if (!model) return Math.min(ceiling, DEFAULT_MAX_RESULT_CHARS);
     const window = resolveContextWindow(model);
-    if (window.provenance === "floor") return DEFAULT_MAX_RESULT_CHARS;
+    if (window.provenance === "floor") return Math.min(ceiling, DEFAULT_MAX_RESULT_CHARS);
     const tools = [...ctx.toolMap.values()].map(t => ({
       name: t.name, description: t.description, parameters: t.parameters,
     }));
     const reserve = resolveOutputReserve(model, window.tokens);
     return tools.length > 0
-      ? toolResultCapChars(window.tokens, toolManifestTokens(tools), reserve)
-      : toolResultCapChars(window.tokens, undefined, reserve);
+      ? toolResultCapChars(window.tokens, toolManifestTokens(tools), reserve, ceiling)
+      : toolResultCapChars(window.tokens, undefined, reserve, ceiling);
   } catch {
-    return DEFAULT_MAX_RESULT_CHARS; // sizing is best-effort; never break the call
+    return ceiling; // sizing is best-effort; never break the call
   }
+}
+
+// Each tool's own ceiling: a file read may return a whole spec (25k tokens),
+// shell output is kept shorter and spills to disk past it, everything else
+// keeps the general ceiling. A window that is unknown or still a placeholder
+// never gets more than the general ceiling (resultCapChars).
+function resultCeilingChars(ctx: ToolCallContext): number {
+  if (ctx.tc.name === "read") return READ_MAX_RESULT_CHARS;
+  if (waitsForShellCommand(ctx.tc.name)) return SHELL_MAX_RESULT_CHARS;
+  return DEFAULT_MAX_RESULT_CHARS;
 }
 
 function firePostHook(ctx: ToolCallContext): void {

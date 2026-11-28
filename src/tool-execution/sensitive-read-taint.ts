@@ -37,7 +37,7 @@ import { isMintedKey, recordMintedKey } from "../data-lineage/minted-keys.js";
 import { workspaceRoot } from "../config.js";
 import { shellCreateTargets } from "./create-target-path.js";
 import { cwdOf } from "./internal-args.js";
-import { DEFAULT_MAX_RESULT_CHARS } from "../context-manager/tool-result-cap.js";
+import { MAX_DELIVERED_RESULT_CHARS } from "../context-manager/tool-result-cap.js";
 import { hasCapability, outputOf, shellCommandOf, waitsForShellCommand } from "../tool-registry.js";
 import { resolveAgentPath } from "../workspace/paths.js";
 import { realpathDeep, isSanctionedWorkRootEnvFile } from "../security/layer/index.js";
@@ -367,17 +367,17 @@ export function applyResultTaintPolicy(
   // wrapExternalContent boundary — that missed unwrapped browser reads and
   // self-tainted any session that merely read a source file containing the
   // boundary literal. The bytes fingerprinted are what the model can see: the
-  // audit phase's capWithSpill caps every delivered result at
-  // DEFAULT_MAX_RESULT_CHARS, so the head up to that ceiling is the whole
+  // audit phase delivers no result longer than
+  // MAX_DELIVERED_RESULT_CHARS, so the head up to that ceiling is the whole
   // delivered content (the spilled tail is reachable only through a later
   // local `read`, which this tool-class axis does not cover).
   if (result && !result.isError && isExternalIngestingTool(toolName)) {
     const url = typeof args.url === "string" ? ` ${args.url}` : "";
-    recordExternalIngestion(sid, result.content.slice(0, DEFAULT_MAX_RESULT_CHARS), `${toolName}${url}`);
+    recordExternalIngestion(sid, result.content.slice(0, MAX_DELIVERED_RESULT_CHARS), `${toolName}${url}`);
   }
   // Private content (an email body, a personal document): recorded so a send
   // to someone new can be put to the user (private-content-gate.ts).
-  recordPrivateReadFromResult(sid, toolName, args, result, DEFAULT_MAX_RESULT_CHARS);
+  recordPrivateReadFromResult(sid, toolName, args, result, MAX_DELIVERED_RESULT_CHARS);
 
   // Policy denial (status:"blocked" per the 5-state envelope): the tool was
   // refused BEFORE producing data — no sensitive byte was read, let alone

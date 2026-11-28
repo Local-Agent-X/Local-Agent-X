@@ -135,3 +135,45 @@ describe("applyBudget — the cap follows the op's model window", () => {
     expect(ctx.result!.content).not.toMatch(/lax-results/);
   });
 });
+
+describe("applyBudget — each tool's own ceiling", () => {
+  const numbered = (n: number, width: number) =>
+    Array.from({ length: n }, (_, i) => `${i + 1}\t${"x".repeat(width)}`).join("\n");
+
+  it("a read on a large window returns a 56 KB spec whole, in one result", () => {
+    opModels.set("op-opus", "claude-opus-5-5");
+    windows.set("claude-opus-5-5", { tokens: 949_000, provenance: "exact" });
+    const spec = numbered(671, 80); // ~56 KB, the file that took three reads
+    const ctx = ctxWith({ content: spec, metadata: { total_lines: 671, lines_shown: 671 } }, "op-opus", [], "read");
+    applyBudget(ctx);
+    expect(ctx.result!.content).toBe(spec);
+  });
+
+  it("a read stops at 25k tokens even on a large window, and says where to continue", () => {
+    opModels.set("op-opus", "claude-opus-5-5");
+    windows.set("claude-opus-5-5", { tokens: 949_000, provenance: "exact" });
+    const huge = numbered(2_000, 80); // ~170 KB
+    const ctx = ctxWith({ content: huge, metadata: { total_lines: 2_000, lines_shown: 2_000 } }, "op-opus", [], "read");
+    applyBudget(ctx);
+    expect(ctx.result!.content.length).toBeLessThanOrEqual(87_500);
+    expect(ctx.result!.metadata?.next_offset).toBeGreaterThan(1_000);
+  });
+
+  it("a read for a model whose window is still a placeholder keeps the general ceiling", () => {
+    opModels.set("op-unloaded", "gemma4:9b");
+    windows.set("gemma4:9b", { tokens: 8_192, provenance: "floor" });
+    const ctx = ctxWith({ content: numbered(700, 80), metadata: { total_lines: 700, lines_shown: 700 } }, "op-unloaded", [], "read");
+    applyBudget(ctx);
+    expect(ctx.result!.content.length).toBeLessThanOrEqual(50_000);
+  });
+
+  it("shell output past 30,000 chars is spilled to disk with a preview", () => {
+    opModels.set("op-opus", "claude-opus-5-5");
+    windows.set("claude-opus-5-5", { tokens: 949_000, provenance: "exact" });
+    const ctx = ctxWith({ content: FORTY_K }, "op-opus", [], "bash");
+    applyBudget(ctx);
+    // The preview is cut at the ceiling; the spill note rides on top of it.
+    expect(ctx.result!.content.length).toBeLessThan(30_500);
+    expect(ctx.result!.content).toMatch(/full result \(40000 chars\) saved to/);
+  });
+});

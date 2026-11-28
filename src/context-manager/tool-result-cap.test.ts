@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_MAX_RESULT_CHARS,
   DEFAULT_TOOL_MANIFEST_TOKENS,
+  MAX_DELIVERED_RESULT_CHARS,
   MIN_RESULT_CAP_CHARS,
+  READ_MAX_RESULT_CHARS,
+  SHELL_MAX_RESULT_CHARS,
   toolResultCapChars,
 } from "./tool-result-cap.js";
 import { OUTPUT_RESERVE_TOKENS, PROMPT_WINDOW_SHARE } from "./request-fit.js";
@@ -57,5 +60,20 @@ describe("toolResultCapChars — window-derived per-result cap", () => {
   it("nonsense windows fall back to the default", () => {
     expect(toolResultCapChars(0)).toBe(DEFAULT_MAX_RESULT_CHARS);
     expect(toolResultCapChars(Number.NaN)).toBe(DEFAULT_MAX_RESULT_CHARS);
+  });
+});
+
+describe("toolResultCapChars — a tool's own ceiling", () => {
+  it("a large window reaches the ceiling it is given, never past it", () => {
+    expect(toolResultCapChars(949_000, undefined, undefined, READ_MAX_RESULT_CHARS)).toBe(READ_MAX_RESULT_CHARS);
+    expect(toolResultCapChars(949_000, undefined, undefined, SHELL_MAX_RESULT_CHARS)).toBe(SHELL_MAX_RESULT_CHARS);
+  });
+
+  it("a small window sizes the same whatever the ceiling: the window is the limit there", () => {
+    expect(toolResultCapChars(65_536, undefined, undefined, READ_MAX_RESULT_CHARS)).toBe(toolResultCapChars(65_536));
+  });
+
+  it("the largest deliverable result covers every ceiling", () => {
+    expect(MAX_DELIVERED_RESULT_CHARS).toBeGreaterThanOrEqual(Math.max(DEFAULT_MAX_RESULT_CHARS, READ_MAX_RESULT_CHARS, SHELL_MAX_RESULT_CHARS));
   });
 });

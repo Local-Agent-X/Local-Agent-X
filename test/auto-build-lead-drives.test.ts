@@ -130,7 +130,8 @@ describe("a lead driving its build from one turn", () => {
     expect(batches[0]).toContain("built part 2");
     expect(batches[1]).toContain('Chunk 3/3, "Part 3": landed.');
     // Chunk 3 was not started while the lead was still reading batch one.
-    expect(startedWhenRead[0]).toEqual([1, 2]);
+    // Chunks 1 and 2 are built side by side, so either may reach its worker first.
+    expect([...startedWhenRead[0]].sort()).toEqual([1, 2]);
     // The lead answered in its turn, so nothing was posted into the chat.
     releaseTurn(CHAT);
     await new Promise((r) => setTimeout(r, 30));

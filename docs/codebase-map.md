@@ -13,18 +13,18 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 75 top-level dirs · 75 live · 0 with no live importer · 2221 non-test source files · 58 oversized · 277 nearing the size cap.
+**Totals:** 75 top-level dirs · 75 live · 0 with no live importer · 2222 non-test source files · 58 oversized · 277 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | Oversized |
 |---|--:|--:|:--:|--:|
-| `src/ops/` | 197 | 32 | XL | 1 |
+| `src/ops/` | 198 | 32 | XL | 1 |
 | `src/security/` | 175 | 67 | XL | 2 |
-| `src/tools/` | 152 | 270 | XL | 6 |
-| `src/tool-execution/` | 113 | 92 | XL | 2 |
+| `src/tools/` | 152 | 271 | XL | 6 |
+| `src/tool-execution/` | 114 | 92 | XL | 2 |
 | `src/workspace/` | 102 | 4 | M |  |
-| `src/canonical-loop/` | 99 | 305 | XL | 6 |
+| `src/canonical-loop/` | 100 | 305 | XL | 6 |
 | `src/util/` | 87 | 5 | S |  |
 | `src/providers/` | 80 | 28 | L | 1 |
 | `src/session/` | 80 | 15 | L |  |
@@ -220,7 +220,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/test-suite-token.ts` | S |
 | `src/test-suite.ts` | M |
 | `src/tool-mutation-check.ts` | S |
-| `src/tool-registry.ts` | S |
+| `src/tool-registry.ts` | M |
 | `src/tool-tracker.ts` | S |
 | `src/tools.ts` | S |
 | `src/trash-journal.ts` | S |

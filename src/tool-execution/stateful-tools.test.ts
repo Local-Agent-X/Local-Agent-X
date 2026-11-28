@@ -18,7 +18,7 @@ const repeat = (tool: string, args: Record<string, unknown>, times: number) => {
 describe("live state is declared on the row", () => {
   it("poll: the stateful set the three layers agreed on before", () => {
     expect([...STATEFUL_LIVE_STATE_TOOLS].sort()).toEqual([
-      "agent_output", "agent_status", "browser", "camera_capture", "clipboard_read", "computer",
+      "agent_output", "agent_status", "browser", "build_next", "camera_capture", "clipboard_read", "computer",
       "op_kill", "op_status", "op_wait", "process_kill", "process_list", "process_restart",
       "process_start", "process_status", "screen_capture", "session_status",
     ]);

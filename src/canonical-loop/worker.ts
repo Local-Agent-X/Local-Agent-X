@@ -42,7 +42,7 @@ import { clearAdapterRetryState, handleAdapterRetry } from "./worker-adapter-ret
 import { reconcileLatestTurnCommit, TurnCommitFenceError } from "./checkpoint.js";
 import { evaluateCheckpointStop } from "./checkpoint-stop.js";
 import { evaluatePerTurnStop } from "./work-check-in.js";
-import { armWallClock, finishOnWallClock, wallClockBudgetMs } from "./worker-wall-clock.js";
+import { armWallClock, finishOnWallClock, wallClockBudgetMs, wallClockSpentMs } from "./worker-wall-clock.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("canonical-loop.worker");
@@ -91,7 +91,7 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
   const tracker: CancelTracker = startCancelTracker(op, adapter);
   let leaseLost = false;
   let deadlineExceeded = false;
-  let wallClockTimer: ReturnType<typeof setTimeout> | null = null;
+  let wallClockTimer: { clear(): void } | null = null;
 
   // Heartbeat: extend the lease periodically. Failure policy (transient
   // contention tolerated, stolen claim fatal) lives in worker-heartbeat.ts;
@@ -112,7 +112,7 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
   const wallClockMs = wallClockBudgetMs(op);
   const drivingSince = Date.now();
   if (wallClockMs !== null) {
-    wallClockTimer = armWallClock(adapter, wallClockMs, () => { deadlineExceeded = true; });
+    wallClockTimer = armWallClock(adapter, wallClockMs, () => { deadlineExceeded = true; }, { opId: op.id, drivingSince });
   }
 
   // Seed the initial user op_message before the first driveTurn so the
@@ -149,7 +149,7 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
       // The armed timer is only the mid-turn preempt and can NOT be the
       // enforcement: a turn whose every await settles as a microtask starves
       // every setTimeout in the process — see worker-wall-clock.ts.
-      if (wallClockMs !== null && !deadlineExceeded && Date.now() - drivingSince >= wallClockMs) {
+      if (wallClockMs !== null && !deadlineExceeded && wallClockSpentMs(op.id, drivingSince) >= wallClockMs) {
         deadlineExceeded = true;
         void adapter.abort(new Error("deadline-exceeded")).catch(() => undefined);
         releaseReason = finishOnWallClock({
@@ -381,7 +381,7 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
     }
   } finally {
     stopHeartbeat(workerId);
-    if (wallClockTimer) clearTimeout(wallClockTimer);
+    wallClockTimer?.clear();
     tracker.off();
     const release = releaseLease(op.id, leaseClaim);
     if (release.ok) {

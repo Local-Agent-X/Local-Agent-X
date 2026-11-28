@@ -43,6 +43,7 @@ import { commitTurnInput } from "./turn-loop/commit-input.js";
 import { createTurnMiddlewarePhases, directiveSkipsToolDispatch } from "./turn-loop/middleware-phases.js";
 import { runAfterCommit } from "./turn-loop/after-commit.js";
 import { elapsedMs, monotonicNow } from "./elapsed.js";
+import { timeUnboundedTools } from "./worker-wall-clock.js";
 
 export type { DriveTurnResult, DriveTurnOptions } from "./turn-loop/types.js";
 export type { TurnLoopDeps } from "./turn-loop/turn-deps.js";
@@ -107,7 +108,7 @@ export async function driveTurn(
   const toolDispatchStart = monotonicNow();
   const { toolMessages, toolSummary } = directiveSkipsToolDispatch(middlewareDirective)
     ? { toolMessages: [] as CommitTurnMessage[], toolSummary: [] }
-    : await deps.dispatchTools(op.id, turnIdx, call.toolCalls, opts.isCancelled);
+    : await timeUnboundedTools(op.id, call.toolCalls, () => deps.dispatchTools(op.id, turnIdx, call.toolCalls, opts.isCancelled));
   const toolDispatchMs = elapsedMs(toolDispatchStart);
   if (opts.isCancelled?.()) return cancelledTurn(toolSummary.length);
 

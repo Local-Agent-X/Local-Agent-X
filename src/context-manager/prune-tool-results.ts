@@ -25,6 +25,7 @@
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import { isHarnessRow } from "../harness-rows.js";
 import { elidedToolResultStub } from "../harness-text.js";
+import { getToolTimeout } from "../tool-execution/tool-timeout.js";
 import { PRUNED_RESULT_KEEP_CHARS } from "./compaction-policy.js";
 
 type Row = ChatCompletionMessageParam & { tool_call_id?: string; tool_calls?: Array<{ id: string; function?: { name?: string } }> };
@@ -59,7 +60,7 @@ export function pruneFinishedTurnToolResults(messages: ChatCompletionMessagePara
     // names from it on every request (anthropic-client/deferred-tools.ts).
     if (name === "tool_search") return m;
     changed = true;
-    return { ...m, content: elidedToolResultStub(name, m.content.length) } as ChatCompletionMessageParam;
+    return { ...m, content: elidedToolResultStub(name, m.content.length, getToolTimeout(name) === 0) } as ChatCompletionMessageParam;
   });
   return changed ? out : messages;
 }

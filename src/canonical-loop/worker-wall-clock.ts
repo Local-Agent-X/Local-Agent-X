@@ -43,6 +43,7 @@ import { transitionOp } from "./state-machine.js";
 import { recordTerminalOutcome } from "./turn-loop/record-outcome.js";
 import type { Op } from "../ops/types.js";
 import type { Adapter } from "./adapter-contract.js";
+import { getToolTimeout } from "../tool-execution/tool-timeout.js";
 
 /** A positive, finite budget arms the timer; 0 / undefined never fires
  *  (tools/build-app.ts stamps 0 on purpose). */
@@ -51,15 +52,59 @@ export function wallClockBudgetMs(op: Op): number | null {
   return typeof ms === "number" && Number.isFinite(ms) && ms > 0 ? ms : null;
 }
 
+/**
+ * Time an op has spent inside a tool that may run for as long as it needs (a
+ * policy row with `timeoutMs: 0`: waiting on a build, a delegated op, a
+ * sub-agent). That is the op waiting on other work, not the op turning, so it
+ * is not spent from the wall clock: a lead that drives a build from one turn
+ * (build_next) waits for hours, and the deadline is there for a turn that spins.
+ */
+const unboundedWaits = new Map<string, { doneMs: number; since: number | null }>();
+
+export function unboundedToolMs(opId: string, now = Date.now()): number {
+  const w = unboundedWaits.get(opId);
+  return w ? w.doneMs + (w.since === null ? 0 : now - w.since) : 0;
+}
+
+/** Run a turn's tool calls, counting the time as a wait when one of them is unbounded. */
+export async function timeUnboundedTools<T>(opId: string, calls: ReadonlyArray<{ tool: string }>, dispatch: () => Promise<T>): Promise<T> {
+  if (!calls.some((c) => getToolTimeout(c.tool) === 0)) return dispatch();
+  const w = unboundedWaits.get(opId) ?? { doneMs: 0, since: null };
+  unboundedWaits.set(opId, w);
+  const since = Date.now();
+  w.since = since;
+  try {
+    return await dispatch();
+  } finally {
+    w.doneMs += Date.now() - since;
+    w.since = null;
+  }
+}
+
+/** What the op has spent of its wall clock: the time since it started driving, less its unbounded waits. */
+export function wallClockSpentMs(opId: string, drivingSince: number, now = Date.now()): number {
+  return now - drivingSince - unboundedToolMs(opId, now);
+}
+
+/** The mid-turn preempt: fires once the op has SPENT its budget, so it re-arms
+ *  for what is left when part of the time went to an unbounded wait. */
 export function armWallClock(
   adapter: Adapter,
   wallClockMs: number,
   onExpiry: () => void,
-): ReturnType<typeof setTimeout> {
-  return setTimeout(() => {
-    onExpiry();
-    void adapter.abort(new Error("deadline-exceeded")).catch(() => undefined);
-  }, wallClockMs);
+  clock: { opId: string; drivingSince: number },
+): { clear(): void } {
+  let timer: ReturnType<typeof setTimeout>;
+  const arm = (ms: number): void => {
+    timer = setTimeout(() => {
+      const left = wallClockMs - wallClockSpentMs(clock.opId, clock.drivingSince);
+      if (left > 0) return arm(Math.max(left, 1_000));
+      onExpiry();
+      void adapter.abort(new Error("deadline-exceeded")).catch(() => undefined);
+    }, ms);
+  };
+  arm(wallClockMs);
+  return { clear: () => { clearTimeout(timer); unboundedWaits.delete(clock.opId); } };
 }
 
 export interface WallClockExpiry {

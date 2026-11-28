@@ -44,8 +44,13 @@ export const TOOL_RESULT_ROW_PREFIX = "[tool result]";
  *  this, not for the row. */
 const ELIDED_TOOL_RESULT_LEAD = "[earlier tool result elided — ";
 
-export function elidedToolResultStub(toolName: string, chars: number): string {
-  return `${ELIDED_TOOL_RESULT_LEAD}${toolName}, ${chars} chars. The file or command is still there to read or run again.]`;
+/** `waited`: the call was a wait on other work (a build, a delegated op), so
+ *  there is nothing to run again; where that work stands is asked for instead. */
+export function elidedToolResultStub(toolName: string, chars: number, waited = false): string {
+  const how = waited
+    ? "It was a wait on other work and cannot be run again: what it said is in what you wrote after it, and that work's status tool says where it stands now."
+    : "The file or command is still there to read or run again.";
+  return `${ELIDED_TOOL_RESULT_LEAD}${toolName}, ${chars} chars. ${how}]`;
 }
 
 export function isElidedToolResult(text: string): boolean {

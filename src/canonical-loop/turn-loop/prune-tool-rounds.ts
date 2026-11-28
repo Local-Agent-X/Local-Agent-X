@@ -21,6 +21,7 @@
  */
 import type { CanonicalMessage } from "../contract-types.js";
 import { elidedToolResultStub, isElidedToolResult } from "../../harness-text.js";
+import { getToolTimeout } from "../../tool-execution/tool-timeout.js";
 import { estimateTokens } from "../../context-manager/token-estimation.js";
 import {
   PRUNE_BATCH_MIN_RECLAIM_TOKENS,
@@ -78,7 +79,7 @@ function stubRows(messages: CanonicalMessage[], before: number): CanonicalMessag
     if (i >= before || !stubbable(m)) return m;
     const { text: _text, result: _result, images: _images, ...rest } = m.content as Record<string, unknown>;
     const name = names.get(String(rest.toolCallId ?? "")) ?? "tool";
-    return { ...m, content: { ...rest, result: elidedToolResultStub(name, resultText(m.content).length) } };
+    return { ...m, content: { ...rest, result: elidedToolResultStub(name, resultText(m.content).length, getToolTimeout(name) === 0) } };
   });
 }
 

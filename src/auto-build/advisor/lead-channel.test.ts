@@ -9,6 +9,9 @@ import { _resetInjectQueues, pushInject } from "../../agent-loop/inject-queue.js
 import { askLead, type LeadSituation } from "./lead-decisions.js";
 import { buildDecideTool } from "./build-decide-tool.js";
 import { buildNextTool, buildNextResult } from "../orchestrator/build-next-tool.js";
+import { isMutationTool } from "../../tool-mutation-check.js";
+import { isCommittingTool } from "../../committing-tool-check.js";
+import { getToolTimeout } from "../../tool-execution/tool-timeout.js";
 import { _resetLeadChannels, leadCheckpoint, leadIsAttached, postToLead, takeForLead, type LeadWait } from "./lead-channel.js";
 
 const CHAT = "chat-lead";
@@ -138,6 +141,15 @@ describe("the build's end", () => {
 });
 
 describe("build_next", () => {
+  // A turn that calls it again and again is leading a build, not spinning: the
+  // guards that end a turn for making no progress count it as work, and the
+  // harness never abandons a call for running long.
+  it("counts as work to the loop guards and has no time limit of its own", () => {
+    expect(isMutationTool("build_next")).toBe(true);
+    expect(isCommittingTool("build_next")).toBe(true);
+    expect(getToolTimeout("build_next")).toBe(0);
+  });
+
   it("returns what the build had and says what to call next", async () => {
     expect(buildNextResult("items", [{ kind: "decision", id: "bd-1", text: "Decision bd-1: ..." }])).toContain("Answer each decision with build_decide, then call build_next again.");
     expect(buildNextResult("items", [{ kind: "batch", text: "Chunk 1 landed." }])).toContain("The build waits here for you");

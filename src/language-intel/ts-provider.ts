@@ -229,9 +229,10 @@ export class TsLanguageIntelProvider implements LanguageIntelProvider {
       project.refresh();
       // Guard: getS*Diagnostics throws on files the program doesn't know.
       if (project.service.getProgram()?.getSourceFile(abs) === undefined) continue;
+      // A script its project's config does not name is parsed, not type-checked.
       const raw = [
         ...project.service.getSyntacticDiagnostics(abs),
-        ...project.service.getSemanticDiagnostics(abs),
+        ...(project.isUncheckedScript(abs) ? [] : project.service.getSemanticDiagnostics(abs)),
       ];
       for (const d of raw) {
         const mapped = toDiagnostic(abs, d);

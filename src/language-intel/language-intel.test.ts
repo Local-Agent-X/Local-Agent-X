@@ -203,6 +203,41 @@ describe("language-intel", () => {
 // to check every file under the root config, so importing a .tsx module raised
 // TS6142 ("--jsx is not set") on a project `tsc -b` builds clean, and the build
 // worker was told to fix errors that did not exist (2026-10-14).
+describe("language-intel — a script under someone else's tsconfig", () => {
+  let root = "";
+  beforeEach(() => {
+    root = realpathSync(mkdtempSync(join(tmpdir(), "language-intel-scripts-")));
+    mkdirSync(join(root, "src"));
+    mkdirSync(join(root, "apps", "tips"), { recursive: true });
+    // A strict, checkJs, no-DOM config that names only its own src/.
+    writeFileSync(join(root, "tsconfig.json"), JSON.stringify({
+      compilerOptions: { target: "ES2022", module: "NodeNext", moduleResolution: "NodeNext", lib: ["ES2022"], strict: true, allowJs: true, checkJs: true },
+      include: ["src"],
+    }));
+    writeFileSync(join(root, "src", "own.js"), "export function own(x) { return x; }\n");
+    writeFileSync(join(root, "apps", "tips", "app.js"), "function total(bill) { return bill * 1.2; }\ndocument.title = String(total(10));\n");
+  });
+  afterEach(() => {
+    disposeLanguageIntel();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("is not held to that config's type rules or its lib", async () => {
+    expect(await getLanguageIntel().getDiagnostics([join(root, "apps", "tips", "app.js")])).toEqual([]);
+  });
+
+  it("still has its syntax errors reported", async () => {
+    writeFileSync(join(root, "apps", "tips", "app.js"), "function total(bill) { return bill * ; }\n");
+    const diags = await getLanguageIntel().getDiagnostics([join(root, "apps", "tips", "app.js")]);
+    expect(diags.length).toBeGreaterThan(0);
+  });
+
+  it("a script the config does name is type-checked as before", async () => {
+    const diags = await getLanguageIntel().getDiagnostics([join(root, "src", "own.js")]);
+    expect(diags.map((d) => d.code)).toEqual([7006]);
+  });
+});
+
 describe("language-intel — solution tsconfig (Vite layout)", () => {
   let app = "";
   beforeEach(() => {

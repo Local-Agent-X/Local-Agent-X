@@ -47,6 +47,10 @@ interface FileEntry {
   mtimeMs: number;
 }
 
+const JS_EXT_RE = /\.(js|jsx|mjs|cjs)$/i;
+
+const normCase = (p: string): string => (process.platform === "win32" ? resolve(p).toLowerCase() : resolve(p));
+
 function mtimeOf(file: string): number {
   try {
     return statSync(file).mtimeMs;
@@ -60,6 +64,8 @@ export class TsProject {
   readonly service: ts.LanguageService;
   private readonly options: ts.CompilerOptions;
   private readonly fileNames: Set<string>;
+  /** The files the project's own config names, as it was read. */
+  private readonly configFiles: ReadonlySet<string>;
   private readonly files = new Map<string, FileEntry>();
   private projectVersion = 0;
 
@@ -67,6 +73,7 @@ export class TsProject {
     this.root = root;
     this.options = options;
     this.fileNames = new Set(fileNames.map((f) => resolve(f)));
+    this.configFiles = new Set([...this.fileNames].map(normCase));
     this.service = ts.createLanguageService(this.createHost(), ts.createDocumentRegistry());
   }
 
@@ -113,6 +120,15 @@ export class TsProject {
     this.fileNames.add(abs);
     this.projectVersion++;
     return true;
+  }
+
+  /** True for a JavaScript file this project's config does not name: the file
+   *  only borrows the config's settings (ensureFile), so the config never asked
+   *  for it to be type-checked. A tsconfig with `checkJs` somewhere above a
+   *  folder of plain scripts would otherwise hold every one of them to its
+   *  strictness and its `lib` (a browser script failing on `document`). */
+  isUncheckedScript(file: string): boolean {
+    return JS_EXT_RE.test(file) && !this.configFiles.has(normCase(file));
   }
 
   /** Force a single file to be re-read from disk on the next query. */
@@ -171,8 +187,6 @@ function findTsconfig(dir: string): string | null {
     cur = parent;
   }
 }
-
-const normCase = (p: string): string => (process.platform === "win32" ? resolve(p).toLowerCase() : resolve(p));
 
 /** The tsconfig that governs `file`, picked the way TypeScript's own editor service
  *  picks it: the nearest tsconfig.json when it includes the file, else the project it

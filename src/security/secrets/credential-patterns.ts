@@ -40,6 +40,14 @@ export interface CredentialPattern {
   /** The captured value is code naming where the credential lives, not the
    *  credential. Every scan of the catalog drops such a match (`catalogMatches`). */
   namesNotValue?: (value: string) => boolean;
+  /**
+   * A value that is a stand-in for the credential (`demo-api-key`): a scan for
+   * credentials does not report it, so nobody is asked about it. Redaction
+   * still masks it. The two differ on purpose: masking a placeholder costs
+   * nothing, and a rule that reads a real passphrase as a stand-in must not
+   * be the reason it reaches the model unmasked.
+   */
+  standIn?: (value: string) => boolean;
 }
 
 /**
@@ -48,11 +56,12 @@ export interface CredentialPattern {
  * through this, so the rule is the same for the raw text, its normalized view
  * and its decoded views.
  */
-export function* catalogMatches(pattern: Pick<CredentialPattern, "regex" | "namesNotValue">, text: string): Generator<RegExpExecArray> {
+export function* catalogMatches(pattern: Pick<CredentialPattern, "regex" | "namesNotValue" | "standIn">, text: string): Generator<RegExpExecArray> {
   pattern.regex.lastIndex = 0;
   let match: RegExpExecArray | null;
   while ((match = pattern.regex.exec(text)) !== null) {
-    if (!pattern.namesNotValue?.(match[1] || match[0])) yield match;
+    const value = match[1] || match[0];
+    if (!pattern.namesNotValue?.(value) && !pattern.standIn?.(value)) yield match;
   }
 }
 
@@ -259,7 +268,8 @@ export const CREDENTIAL_PATTERNS: readonly CredentialPattern[] = [
   {
     type: "generic", name: "Key-Value Secret",
     regex: new RegExp(`(?:${CREDENTIAL_KEY_NAMES})[ \\t]*[:=][ \\t]*["']?(?=(?:[*•]*[^\\s"',*•]){8})([^\\s"',]{12,})`, "gi"),
-    namesNotValue: (value: string) => namesWhereCredentialLives(value) || isPlaceholderValue(value),
+    namesNotValue: namesWhereCredentialLives,
+    standIn: isPlaceholderValue,
   },
   { type: "generic", name: "Base64 Secret Assignment", regex: /(?:private[_-]?key|client[_-]?secret|signing[_-]?key)[ \t]*[:=][ \t]*["']?([A-Za-z0-9+/=]{40,})/gi },
 ];

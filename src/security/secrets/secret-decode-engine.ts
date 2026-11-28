@@ -55,11 +55,12 @@ export function maskSecret(value: string): string {
 // gated by decode round-trips / normalization, never raw prose, and (b) the
 // pattern body itself (`sk-ant-…{20,}`, `AKIA…{16}`, an `eyJ…` JWT triple) is the
 // discriminating signal — the `\b` was a cheap pre-filter, not the security.
-const DERIVED_VIEW_PATTERNS: ReadonlyArray<Pick<CredentialPattern, "name" | "regex" | "namesNotValue">> =
+const DERIVED_VIEW_PATTERNS: ReadonlyArray<Pick<CredentialPattern, "name" | "regex" | "namesNotValue" | "standIn">> =
   CREDENTIAL_PATTERNS.map((p) => ({
     name: p.name,
     regex: new RegExp(p.regex.source.replace(/^\\b/, ""), p.regex.flags),
     namesNotValue: p.namesNotValue,
+    standIn: p.standIn,
   }));
 
 // The first catalog shape a DERIVED view trips, by name: the anchor-relaxed

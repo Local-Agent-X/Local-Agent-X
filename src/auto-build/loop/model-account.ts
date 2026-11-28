@@ -8,7 +8,7 @@
  * went through retries and were set aside, and the owner learned of it from
  * the halt history.
  */
-import { normalizeRuntimeFailure } from "../../canonical-loop/runtime-failure-category.js";
+import { normalizeRuntimeFailure } from "../../canonical-loop/public/runtime-failure.js";
 import type { ChunkReviewOutcome } from "../chunk-review/index.js";
 
 const ACCOUNT_FAILURES: ReadonlySet<string> = new Set(["billing", "auth"]);

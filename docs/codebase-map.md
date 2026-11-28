@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 75 top-level dirs · 75 live · 0 with no live importer · 2217 non-test source files · 58 oversized · 277 nearing the size cap.
+**Totals:** 75 top-level dirs · 75 live · 0 with no live importer · 2218 non-test source files · 58 oversized · 276 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -24,7 +24,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/tools/` | 152 | 270 | XL | 6 |
 | `src/tool-execution/` | 109 | 92 | XL | 2 |
 | `src/workspace/` | 102 | 4 | M |  |
-| `src/canonical-loop/` | 99 | 304 | XL | 6 |
+| `src/canonical-loop/` | 99 | 305 | XL | 6 |
 | `src/util/` | 87 | 5 | S |  |
 | `src/providers/` | 80 | 28 | L | 1 |
 | `src/session/` | 79 | 15 | L |  |
@@ -352,7 +352,6 @@ job. Comments are free: never cut them to fit.
 - `src/memory/index-core.ts` — 300+ code lines (cap 350)
 - `src/voice/voice-session/turn-runner.ts` — 300+ code lines (cap 350)
 - `src/agency/worktree-lifecycle.ts` — 290+ code lines (cap 350)
-- `src/api-docs.ts` — 290+ code lines (cap 350)
 - `src/auth/storage.ts` — 290+ code lines (cap 350)
 - `src/browser/in-app-resolve-scripts.ts` — 290+ code lines (cap 350)
 - `src/canonical-loop/turn-commit-store.ts` — 290+ code lines (cap 350)

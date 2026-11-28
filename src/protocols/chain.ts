@@ -33,10 +33,22 @@ function generateChainId(): string {
   return `chain_${Date.now().toString(36)}_${randomBytes(4).toString("hex")}`;
 }
 
+/**
+ * The chain, once its links are known to be links. They arrive from a model's
+ * tool call, where argument validation checks that `links` is a list and no
+ * further: a list of bare names used to be stored and started, and ran as
+ * "First protocol: undefined".
+ */
 export function createChain(chain: ProtocolChain): ProtocolChain {
-  if (chain.links.length < 2) {
+  if (!Array.isArray(chain.links) || chain.links.length < 2) {
     throw new Error("A chain must have at least 2 protocols");
   }
+  chain.links.forEach((link, i) => {
+    const name = (link as Partial<ChainLink> | null)?.protocolName;
+    if (typeof name !== "string" || !name.trim()) {
+      throw new Error(`links[${i}] must be an object with a protocolName, e.g. {"protocolName":"research","outputKey":"notes"}`);
+    }
+  });
   return chain;
 }
 
@@ -156,7 +168,7 @@ export function createChainTools(): ToolDefinition[] {
       },
       async execute(args) {
         const chain = chainDefinitions.get(String(args.chainName));
-        if (!chain) return { content: `Chain "${args.chainName}" not found.` };
+        if (!chain) return { content: `Chain "${args.chainName}" not found. Create it first with the chain_create action.`, isError: true };
         const id = startChain(chain);
         const firstLink = chain.links[0];
         return {

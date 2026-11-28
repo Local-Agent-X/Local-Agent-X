@@ -99,8 +99,9 @@ nothing in flight.
 
 - **Engine:** `run_build_plan`. It reads the graph from `spec/plan.md`
   (**Depends on:** and **Files:**), dispatches each wave together, merges each
-  chunk back as it goes green, and survives a restart; `build_plan_status`
-  shows where it is and `build_plan_resume` continues a halted run.
+  chunk back as it goes green, and survives a restart; `build_next` leads it
+  from your turn, `build_plan_status` shows where it is and `build_plan_resume`
+  continues a halted run.
 - **Isolation:** every chunk that writes files gets its own git worktree. Merge
   each back as it goes green, and resolve merges at the orchestrator.
 - **One agent owns one chunk owns one worktree.** Splitting a chunk across

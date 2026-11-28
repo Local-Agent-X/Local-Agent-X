@@ -190,9 +190,12 @@ scored against its own scenarios and attacked by a skeptic before it lands
 (only a break of the chunk's contract holds it back; what the skeptic finds
 beyond the contract is a follow-up for the ledger, never a new requirement),
 and each phase is scored again against the sealed suite before the next
-starts. Then end your turn rather than poll: the chat is woken with the
-result when the run halts or finishes, and `build_plan_status` shows where it
-is in between.
+starts. Then lead the run from this turn with `build_next`: it waits for the
+build and returns each batch's reports and reviews, each decision that needs
+you (answer with `build_decide`) and the end. Read what it returns, check
+anything you doubt, and call it again; the build waits for you between
+batches. Do not poll any other way. If your turn ends first, the build goes on
+by its own rules and the chat is woken when it needs a decision or ends.
 Decide engineering questions and record
 them; park product, taste, money and risk questions and keep the run moving.
 The ledger, not the conversation, holds the state.

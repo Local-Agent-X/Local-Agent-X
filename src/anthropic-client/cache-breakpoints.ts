@@ -10,15 +10,37 @@
 
 import type { AnthropicContent, AnthropicMessage } from "./types.js";
 
-export type SystemBlock = { type: "text"; text: string; cache_control?: { type: "ephemeral"; ttl?: "1h" } };
+export type CacheTtl = "1h";
+export type CacheControl = { type: "ephemeral"; ttl?: CacheTtl };
+export type SystemBlock = { type: "text"; text: string; cache_control?: CacheControl };
+
+/**
+ * The lifetime of the conversation's breakpoints: one hour on the
+ * subscription, the 5-minute default on an API key.
+ *
+ * A reply that comes more than five minutes after the last one is the common
+ * case in a chat, and at five minutes it found the conversation expired and
+ * wrote all of it again: 84k tokens for one message 5 min 6 s after the last
+ * (glasses chat, 2026-11-27); about 70% of two weeks' cache writes came in
+ * rewrites over 50k. An hour costs 2x instead of 1.25x on what each round
+ * adds, a few thousand tokens. An API key keeps the default: billed per token,
+ * an agent loop whose rounds start under five minutes apart pays that extra
+ * for nothing. When the conversation is on an hour, so is every marker before
+ * it: an hour-long entry may not follow a 5-minute one.
+ */
+export function conversationCacheTtl(subscription: boolean): CacheTtl | undefined {
+  return subscription ? "1h" : undefined;
+}
+
+function cacheControl(ttl?: CacheTtl): CacheControl {
+  return ttl ? { type: "ephemeral", ttl } : { type: "ephemeral" };
+}
 
 // True when splitSystemBlocks will emit a [stable | volatile] pair. Only then
-// is the tools + stable-system prefix worth a 1-hour breakpoint: it changes
-// rarely (a grown tool set, an edited prompt file), so the 2x write is paid
-// seldom while every 5-60 minute pause between user messages reads it back
-// instead of re-writing it. The conversation tier stays on the 5-minute
-// default — it changes every round, and 1-hour entries must precede 5-minute
-// ones in the prefix, which tools -> system -> messages already guarantees.
+// is the tools + stable-system prefix worth a 1-hour breakpoint on an API key:
+// it changes rarely (a grown tool set, an edited prompt file), so the 2x write
+// is paid seldom while every 5-60 minute pause between user messages reads it
+// back instead of re-writing it.
 export function hasStableSystemSplit(systemPrompt: string, stableLen?: number): boolean {
   return stableLen !== undefined && stableLen > 0 && stableLen < systemPrompt.length;
 }
@@ -27,13 +49,15 @@ export function hasStableSystemSplit(systemPrompt: string, stableLen?: number): 
 // the breakpoint (the long-standing behavior). With one: [stable w/ breakpoint,
 // volatile tail uncached], so a per-turn tail rewrite costs only the tail
 // instead of missing the whole tools+system tier.
-export function splitSystemBlocks(systemPrompt: string, stableLen?: number, tailInMessages = false): SystemBlock[] {
+// `ttl` is the conversation's (conversationCacheTtl): a single block must not
+// expire before the conversation entries that follow it.
+export function splitSystemBlocks(systemPrompt: string, stableLen?: number, tailInMessages = false, ttl?: CacheTtl): SystemBlock[] {
   if (hasStableSystemSplit(systemPrompt, stableLen)) {
-    const stable: SystemBlock = { type: "text", text: systemPrompt.slice(0, stableLen), cache_control: { type: "ephemeral", ttl: "1h" } };
+    const stable: SystemBlock = { type: "text", text: systemPrompt.slice(0, stableLen), cache_control: cacheControl("1h") };
     // The tail travels at the end of the conversation instead (withSystemTail).
     return tailInMessages ? [stable] : [stable, { type: "text", text: systemPrompt.slice(stableLen) }];
   }
-  return [{ type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } }];
+  return [{ type: "text", text: systemPrompt, cache_control: cacheControl(ttl) }];
 }
 
 /** What opens the system prompt's per-turn tail when it is sent in the conversation. */
@@ -84,6 +108,7 @@ export function markConversationCache(
    *  rewriting the history. With tools and system that makes four, the API's
    *  limit. Placed only strictly below the main breakpoint. */
   frontier?: number,
+  ttl?: CacheTtl,
 ): AnthropicMessage[] {
   if (!enabled || messages.length === 0) return messages;
   // A tail that would swallow the whole conversation leaves NOTHING stable to
@@ -96,22 +121,22 @@ export function markConversationCache(
   if (ephemeralTail >= messages.length) return messages;
   const idx = messages.length - 1 - Math.max(0, ephemeralTail);
   const out = [...messages];
-  markMessage(out, idx);
-  if (frontier !== undefined && frontier >= 0 && frontier < idx) markMessage(out, frontier);
+  markMessage(out, idx, ttl);
+  if (frontier !== undefined && frontier >= 0 && frontier < idx) markMessage(out, frontier, ttl);
   return out;
 }
 
 /** Put the breakpoint on the last block of out[idx], in place. */
-function markMessage(out: AnthropicMessage[], idx: number): void {
+function markMessage(out: AnthropicMessage[], idx: number, ttl?: CacheTtl): void {
   const target = out[idx];
   let content: AnthropicContent[];
   if (typeof target.content === "string") {
     if (!target.content) return;
-    content = [{ type: "text", text: target.content, cache_control: { type: "ephemeral" } }];
+    content = [{ type: "text", text: target.content, cache_control: cacheControl(ttl) }];
   } else {
     if (target.content.length === 0) return;
     content = [...target.content];
-    content[content.length - 1] = { ...content[content.length - 1], cache_control: { type: "ephemeral" } };
+    content[content.length - 1] = { ...content[content.length - 1], cache_control: cacheControl(ttl) };
   }
   out[idx] = { ...target, content };
 }

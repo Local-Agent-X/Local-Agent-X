@@ -7,7 +7,7 @@ import {
 } from "./oauth-direct.js";
 import type { AnthropicMessage } from "./types.js";
 import type { StreamEvent, StreamOptions } from "./types.js";
-import { hasStableSystemSplit, markConversationCache, splitSystemBlocks, withSystemTail, type SystemBlock } from "./cache-breakpoints.js";
+import { conversationCacheTtl, hasStableSystemSplit, markConversationCache, splitSystemBlocks, withSystemTail, type CacheTtl, type SystemBlock } from "./cache-breakpoints.js";
 import { createLogger } from "../logger.js";
 import { toAnthropicTools } from "../providers/shared/tool-shape.js";
 import { deferSearchLoads } from "./deferred-tools.js";
@@ -78,14 +78,28 @@ function convertedFrontier(messages: StreamOptions["messages"], index: number | 
  *  point, the system prompt's per-turn tail rides at the end of the
  *  conversation: the row it lands on is volatile, so at least one trailing row
  *  is ephemeral and the conversation breakpoint goes beneath it. */
+/** The lifetime of the request's markers (cache-breakpoints.ts
+ *  conversationCacheTtl): one for all of them, so none outlives one before it. */
+function requestCacheTtl(options: StreamOptions, oauth: boolean): CacheTtl | undefined {
+  return options.cacheConversation ? conversationCacheTtl(oauth) : undefined;
+}
+
+/** The tools marker: an hour whenever the system prompt splits (its stable
+ *  part is on an hour), else the request's lifetime. */
+function toolsCacheTtl(options: StreamOptions, oauth: boolean): CacheTtl | undefined {
+  const { systemPrompt, systemStablePrefixLen } = options;
+  return systemPrompt && hasStableSystemSplit(systemPrompt, systemStablePrefixLen) ? "1h" : requestCacheTtl(options, oauth);
+}
+
 function cachedPromptParts(options: StreamOptions, converted: AnthropicMessage[], oauth: boolean): { system: SystemBlock[] | undefined; messages: AnthropicMessage[] } {
   const { systemPrompt, systemStablePrefixLen, cacheConversation, ephemeralTailMessages, messages, cacheFrontierIndex } = options;
+  const ttl = requestCacheTtl(options, oauth);
   const tailInMessages = !!options.systemTailInMessages && !!systemPrompt && hasStableSystemSplit(systemPrompt, systemStablePrefixLen);
-  const own = systemPrompt ? splitSystemBlocks(systemPrompt, systemStablePrefixLen, tailInMessages) : undefined;
+  const own = systemPrompt ? splitSystemBlocks(systemPrompt, systemStablePrefixLen, tailInMessages, ttl) : undefined;
   const system: SystemBlock[] | undefined = oauth
     ? own
       ? [{ type: "text", text: CLAUDE_CODE_SYSTEM_PREFIX }, ...own]
-      : [{ type: "text", text: CLAUDE_CODE_SYSTEM_PREFIX, cache_control: { type: "ephemeral" } }]
+      : [{ type: "text", text: CLAUDE_CODE_SYSTEM_PREFIX, cache_control: ttl ? { type: "ephemeral", ttl } : { type: "ephemeral" } }]
     : own;
   return {
     system,
@@ -94,6 +108,7 @@ function cachedPromptParts(options: StreamOptions, converted: AnthropicMessage[]
       cacheConversation,
       tailInMessages ? Math.max(1, ephemeralTailMessages ?? 0) : ephemeralTailMessages,
       convertedFrontier(messages, cacheFrontierIndex),
+      ttl,
     ),
   };
 }
@@ -243,7 +258,7 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
     ? toAnthropicTools(view.tools, {
         mapName: oauth ? toOAuthWireName : undefined,
         cacheControlLast: true,
-        cacheTtl: systemPrompt && hasStableSystemSplit(systemPrompt, systemStablePrefixLen) ? "1h" : undefined,
+        cacheTtl: toolsCacheTtl(options, oauth),
         deferred: view.deferred,
       })
     : undefined;

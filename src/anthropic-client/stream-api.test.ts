@@ -927,3 +927,69 @@ describe("streamViaAPI: the system prompt's per-turn tail at the end of the conv
     expect(body.messages[0].content).toBe("hi");
   });
 });
+
+describe("streamViaAPI — cache lifetime: an hour on the subscription", () => {
+  const done = sse([
+    { type: "content_block_delta", delta: { type: "text_delta", text: "hi" } },
+    { type: "message_delta", usage: { output_tokens: 1 }, delta: { stop_reason: "end_turn" } },
+  ]);
+  const OAUTH = "direct-oauth:sk-ant-oat-fake";
+  const tools = [
+    { name: "alpha", description: "a", parameters: { type: "object" } },
+    { name: "beta", description: "b", parameters: { type: "object" } },
+  ];
+  const conversation = {
+    cacheConversation: true,
+    messages: [
+      { role: "user" as const, content: "first" },
+      { role: "assistant" as const, content: "reply" },
+      { role: "user" as const, content: "second" },
+    ],
+  };
+
+  /** Every cache_control in wire order: tools, then system, then messages. */
+  function markers(body: Record<string, unknown>): Array<{ type: string; ttl?: string }> {
+    const found: Array<{ type: string; ttl?: string }> = [];
+    const visit = (block: unknown) => {
+      const cc = (block as { cache_control?: { type: string; ttl?: string } }).cache_control;
+      if (cc) found.push(cc);
+    };
+    for (const t of (body.tools as unknown[] | undefined) ?? []) visit(t);
+    for (const s of (body.system as unknown[] | undefined) ?? []) visit(s);
+    for (const m of body.messages as Array<{ content: unknown }>) {
+      if (Array.isArray(m.content)) m.content.forEach(visit);
+    }
+    return found;
+  }
+
+  it("marks the conversation, and everything before it, for an hour", async () => {
+    const cap = stubFetchCapturing(done);
+    await collect({ token: OAUTH, model: "claude-opus-5-5", systemPrompt: "WHOLE", tools, ...conversation });
+    const found = markers(cap.calls[0].body);
+    expect(found.length).toBeGreaterThanOrEqual(3); // tools, system, conversation
+    for (const m of found) expect(m).toEqual({ type: "ephemeral", ttl: "1h" });
+  });
+
+  it("keeps the 5-minute default for the conversation on an API key", async () => {
+    const cap = stubFetchCapturing(done);
+    await collect({ token: "sk-ant-api03-real", model: "claude-opus-5-5", systemPrompt: "WHOLE", tools, ...conversation });
+    const msgs = cap.calls[0].body.messages as Array<{ content: unknown }>;
+    expect(msgs[2].content).toEqual([{ type: "text", text: "second", cache_control: { type: "ephemeral" } }]);
+  });
+
+  it("never puts an hour-long marker after a 5-minute one, which the API refuses", async () => {
+    const cap = stubFetchCapturing(done);
+    for (const token of [OAUTH, "sk-ant-api03-real"]) {
+      for (const split of [{ systemPrompt: "STABLE" + "TAIL", systemStablePrefixLen: 6 }, { systemPrompt: "WHOLE" }, { systemPrompt: "" }]) {
+        for (const withConversation of [true, false]) {
+          await collect({ token, model: "claude-opus-5-5", tools, ...split, ...conversation, cacheConversation: withConversation });
+        }
+      }
+    }
+    for (const call of cap.calls) {
+      const ttls = markers(call.body).map((m) => m.ttl ?? "5m");
+      const firstShort = ttls.indexOf("5m");
+      if (firstShort >= 0) expect(ttls.slice(firstShort)).not.toContain("1h");
+    }
+  });
+});

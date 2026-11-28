@@ -129,7 +129,7 @@ export type AnthropicContent = (
   | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> }
   | { type: "tool_result"; tool_use_id: string; content: string | ToolReference[] }
   | ThinkingBlock
-) & { cache_control?: { type: "ephemeral" } };
+) & { cache_control?: { type: "ephemeral"; ttl?: "1h" } };
 
 /** A tool loaded inline: the API expands it into the tool's definition at this
  *  point in the conversation (deferred-tools.ts). */

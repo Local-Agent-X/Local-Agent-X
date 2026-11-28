@@ -12,10 +12,11 @@
  *   7. Return opId immediately so the caller doesn't block
  */
 
-import { readFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { readFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { createNamedWorktree } from "../agency/worktree.js";
 import { randomId } from "../util/ids.js";
+import { writeOperationRecord } from "../ops/operation-record-file.js";
 import { acquireLock, registerExitCleanup } from "./lock.js";
 import { runAutopilotLoop } from "./loop.js";
 import type { AutopilotConfig, StartAutopilotRequest } from "./types.js";
@@ -230,7 +231,7 @@ export async function startAutopilot(
 
   const opDir = join(deps.workspaceDir, op.id);
   if (!existsSync(opDir)) mkdirSync(opDir, { recursive: true });
-  writeFileSync(join(opDir, "operation.json"), JSON.stringify(autopilotRecord(op), null, 2), "utf-8");
+  writeOperationRecord(opDir, JSON.stringify(autopilotRecord(op), null, 2));
 
   // Pin to Anthropic for round agents when possible — see pickAutopilotProvider
   // doc above for rationale (Codex narrates and bails; Anthropic commits).
@@ -248,7 +249,7 @@ export async function startAutopilot(
       level: "info",
       message: `Round agents pinned to Anthropic (${picked.model}) for reliability — launcher was ${deps.provider}`,
     });
-    writeFileSync(join(opDir, "operation.json"), JSON.stringify(autopilotRecord(op), null, 2), "utf-8");
+    writeOperationRecord(opDir, JSON.stringify(autopilotRecord(op), null, 2));
   }
 
   // Kick off the loop in the background. Don't await — we return immediately.

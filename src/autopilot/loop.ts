@@ -9,6 +9,7 @@
 import { writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { autopilotRecord, type Operation } from "./operation-types.js";
+import { writeOperationRecord } from "../ops/operation-record-file.js";
 import { AUTOPILOT_DONE_MARKER, type AutopilotConfig, type AutopilotState, type BootProof, type RoundResult } from "./types.js";
 import { runAutopilotRound } from "./round-agent.js";
 import { validateRound, partitionByScope } from "./validate.js";
@@ -391,8 +392,7 @@ function persistOp(op: Operation, workspaceDir: string): void {
   try {
     const opDir = join(workspaceDir, op.id);
     if (!existsSync(opDir)) return;
-    const file = join(opDir, "operation.json");
-    writeFileSync(file, JSON.stringify(autopilotRecord(op), null, 2), "utf-8");
+    writeOperationRecord(opDir, JSON.stringify(autopilotRecord(op), null, 2));
   } catch (e) {
     logger.warn(`[autopilot.loop] persist failed: ${(e as Error).message}`);
   }

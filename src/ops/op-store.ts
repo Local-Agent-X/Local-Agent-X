@@ -11,10 +11,7 @@
  */
 
 import {
-  closeSync,
   existsSync,
-  fsyncSync,
-  openSync,
   writeFileSync,
   readFileSync,
   renameSync,
@@ -29,7 +26,8 @@ import { getLaxDir } from "../lax-data-dir.js";
 import { opDir } from "./event-log.js";
 import type { Op, OpStatus } from "./types.js";
 import { randomId } from "../util/ids.js";
-import { atomicWriteFileSync, type AtomicWriteOperations } from "../util/json-store.js";
+import type { AtomicWriteOperations } from "../util/json-store.js";
+import { operationRecordPath, readOperationRecord, writeOperationRecord } from "./operation-record-file.js";
 
 import { createLogger } from "../logger.js";
 import { OP_TYPE } from "./op-types.js";
@@ -111,42 +109,16 @@ export function writeOpStrict(op: Op): boolean {
 // Windows box: 0% of renames fail with no concurrent reader, 5-34% with one.
 // A dropped write here silently loses an Op's lifecycle transition, so the
 // bounded contention retry in atomicWriteFileSync is load-bearing, not polish.
+// The write itself (flushed, then renamed in) is operation-record-file.ts's.
 function attemptWriteOp(op: Op, strict: boolean): Error | null {
-  const target = join(opDir(op.id), "operation.json");
   const record: Op = { kind: OP_RECORD_KIND, schemaVersion: OP_SCHEMA_VERSION, ...op };
   try {
-    atomicWriteFileSync(
-      target,
-      JSON.stringify(record, null, 2),
-      { mode: 0o600 },
-      injectedWriteFailure(strict) ?? FLUSHED_OP_WRITE,
-    );
+    writeOperationRecord(opDir(op.id), JSON.stringify(record, null, 2), injectedWriteFailure(strict));
     return null;
   } catch (e) {
     return e as Error;
   }
 }
-
-/**
- * The atomic write with its new bytes flushed to disk before the rename. The
- * rename can reach the disk before the data does: after a crash or power loss
- * the record is then all zero bytes, unreadable, and its op is gone from every
- * view (an operation.json of 12,369 NULs, 2026-11-18). Flushing first means a
- * crash leaves the old record or the new one.
- */
-const FLUSHED_OP_WRITE: AtomicWriteOperations = {
-  write: (path, data, opts) => {
-    const fd = openSync(path, "w", opts.mode ?? 0o600);
-    try {
-      writeFileSync(fd, data, { encoding: opts.encoding });
-      fsyncSync(fd);
-    } finally {
-      closeSync(fd);
-    }
-  },
-  rename: renameSync,
-  unlink: (path) => rmSync(path, { force: true }),
-};
 
 /**
  * Test seam: fail one strict write at a chosen point. `seen` advances once per
@@ -362,14 +334,8 @@ function reclaimStaleLock(lockPath: string): boolean {
 
 
 export function readOp(opId: string): Op | null {
-  const path = join(opDir(opId), "operation.json");
-  if (!existsSync(path)) return null;
-  try {
-    return parseOp(JSON.parse(readFileSync(path, "utf-8")), opId);
-  } catch (e) {
-    logger.warn(`[op-store] failed to read op ${opId}: ${(e as Error).message}`);
-    return null;
-  }
+  const raw = readOperationRecord(opDir(opId), opId);
+  return raw === undefined ? null : parseOp(raw, opId);
 }
 
 /** Every op ever run, parsed. Not for a server path: on a store of a few
@@ -396,7 +362,7 @@ export function listRecentOps(limit: number): Op[] {
   const candidates: Array<{ id: string; mtimeMs: number }> = [];
   for (const id of readdirSync(OPS_BASE)) {
     try {
-      const stat = statSync(join(OPS_BASE, id, "operation.json"));
+      const stat = statSync(operationRecordPath(join(OPS_BASE, id)));
       if (stat.isFile()) candidates.push({ id, mtimeMs: stat.mtimeMs });
     } catch { /* concurrently removed or incomplete op */ }
   }

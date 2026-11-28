@@ -13,19 +13,19 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 76 top-level dirs · 76 live · 0 with no live importer · 2229 non-test source files · 57 oversized · 276 nearing the size cap.
+**Totals:** 76 top-level dirs · 76 live · 0 with no live importer · 2230 non-test source files · 57 oversized · 275 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | Oversized |
 |---|--:|--:|:--:|--:|
-| `src/ops/` | 198 | 32 | XL | 1 |
+| `src/ops/` | 200 | 33 | XL | 1 |
 | `src/security/` | 178 | 68 | XL | 2 |
 | `src/tools/` | 154 | 273 | XL | 5 |
 | `src/tool-execution/` | 115 | 92 | XL | 2 |
 | `src/workspace/` | 103 | 4 | M |  |
 | `src/canonical-loop/` | 100 | 306 | XL | 6 |
-| `src/util/` | 88 | 5 | S |  |
+| `src/util/` | 89 | 5 | S |  |
 | `src/providers/` | 80 | 28 | L | 1 |
 | `src/session/` | 80 | 15 | L |  |
 | `src/memory/` | 68 | 164 | XL | 1 |
@@ -359,7 +359,6 @@ job. Comments are free: never cut them to fit.
 - `src/memory/index-schema-migrations.ts` — 290+ code lines (cap 350)
 - `src/memory/promotion-gate.ts` — 290+ code lines (cap 350)
 - `src/memory/tools/save.ts` — 290+ code lines (cap 350)
-- `src/ops/op-store.ts` — 290+ code lines (cap 350)
 - `src/ops/operation-requirements.ts` — 290+ code lines (cap 350)
 - `src/protocols/skills-install.ts` — 290+ code lines (cap 350)
 - `src/telegram-bridge/bridge.ts` — 290+ code lines (cap 350)

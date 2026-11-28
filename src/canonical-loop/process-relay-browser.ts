@@ -2,6 +2,7 @@ import type { ServerEvent } from "../types.js";
 import { readOp } from "../ops/op-store.js";
 import {
   GLOBAL_EVENT_TYPES,
+  relayEventReachesATab,
   sendProcessRelayDelivery,
 } from "../chat-ws/process-relay-delivery.js";
 import {
@@ -30,11 +31,18 @@ setProcessRelayParentHandler(reconcilePendingProcessRelay);
 export function reconcilePendingProcessRelay(opId: string): number {
   return reconcileProcessRelay(opId, (state, record, target) => {
     if (target === "canonical-core") return projectProcessRelayTarget(state, record, target);
-    const delivery = buildBrowserDelivery(state, record);
     if (target === "session-observer") {
-      for (const event of delivery.events) notifySessionEventObservers(delivery.sessionId, event);
+      const sessionId = state.sealedGeneration.generation.sessionId;
+      for (const event of relayedEvents(state, record)) notifySessionEventObservers(sessionId, event);
       return true;
     }
+    const delivery = buildBrowserDelivery(state, record);
+    // A record with nothing for any tab is rendered already. Sent, it could
+    // only be acknowledged by a tab subscribed to its session, and a headless
+    // session has none: every mail watch and failure review kept its journal
+    // until the op itself was pruned a week later, and each pass over pending
+    // relays visited them all (253 journals on one machine, 2026-11-27).
+    if (delivery.events.length === 0) return true;
     sendProcessRelayDelivery(delivery);
     return false;
   });
@@ -109,17 +117,35 @@ export function acknowledgeBrowserProcessRelay(
   return true;
 }
 
+/** Every chat event one record carries, for whoever is listening to its session. */
+function relayedEvents(
+  state: Readonly<ProcessRelayGenerationState>,
+  record: Readonly<ProcessRelayRecord>,
+): ServerEvent[] {
+  if (record.kind === "canonical-event") {
+    const sessionId = state.sealedGeneration.generation.sessionId;
+    return collectCanonicalBrowserEvents(canonicalRelayEvent(record), sessionId)?.events ?? [];
+  }
+  if (record.kind === "session-event") return [record.payload as ServerEvent];
+  throw new Error("stream relay records have no browser projection");
+}
+
+/**
+ * What the tabs are owed for one record: the events some tab can receive, each
+ * under the id of its place in the record, so an event keeps its id whichever
+ * others are left out. A headless session's batch is therefore its global
+ * events alone, which any tab can acknowledge; before, the session's own events
+ * stayed in it and the batch waited for a subscriber that cannot exist.
+ */
 export function buildBrowserDelivery(
   state: Readonly<ProcessRelayGenerationState>,
   record: Readonly<ProcessRelayRecord>,
 ): ProcessRelayBrowserDelivery {
   const generation = state.sealedGeneration.generation;
-  let events: ServerEvent[];
-  if (record.kind === "canonical-event") {
-    events = collectCanonicalBrowserEvents(canonicalRelayEvent(record), generation.sessionId)?.events ?? [];
-  } else if (record.kind === "session-event") {
-    events = [record.payload as ServerEvent];
-  } else throw new Error("stream relay records have no browser projection");
+  const owed = relayedEvents(state, record)
+    .map((event, index) => ({ event, id: `${record.deliveryId}:${index}` }))
+    .filter(({ event }) => relayEventReachesATab(generation.sessionId, event.type));
+  const events = owed.map(({ event }) => event);
   const globalCount = events.filter(event => GLOBAL_EVENT_TYPES.has(event.type)).length;
   const scope = globalCount === events.length && events.length > 0
     ? "global" as const
@@ -133,6 +159,6 @@ export function buildBrowserDelivery(
     deliveryId: record.deliveryId,
     scope,
     events,
-    eventIds: events.map((_event, index) => `${record.deliveryId}:${index}`),
+    eventIds: owed.map(({ id }) => id),
   };
 }

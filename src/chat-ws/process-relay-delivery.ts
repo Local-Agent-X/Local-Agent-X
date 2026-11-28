@@ -18,6 +18,17 @@ export const GLOBAL_EVENT_TYPES = new Set([
 ]);
 
 /**
+ * Whether any tab can ever receive an event of this type from `sessionId`'s
+ * worker. A headless session's own events reach no tab, subscribed or not
+ * (sendProcessRelayDelivery below); the ones every tab sees still do. A batch
+ * is built from the events this passes, so nothing waits on a tab for an event
+ * no tab will be sent.
+ */
+export function relayEventReachesATab(sessionId: string, eventType: string): boolean {
+  return GLOBAL_EVENT_TYPES.has(eventType) || !isHeadlessSession(sessionId);
+}
+
+/**
  * Send one worker's batch to the tabs that should see it. The audience differs
  * from broadcastToSession's (a batch can be global, session-only or both), so
  * the loop is this module's; everything else is shared: serializeFrame masks

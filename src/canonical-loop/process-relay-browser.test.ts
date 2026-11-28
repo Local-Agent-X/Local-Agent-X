@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
@@ -14,7 +14,7 @@ process.env.LAX_AUDIT_KEY = "relay-browser-test-key";
 
 const { writeOp } = await import("../ops/op-store.js");
 const { clients } = await import("../chat-ws/state.js");
-const { claimProcessExecution } = await import("./process-execution-claim.js");
+const { claimProcessExecution, removeProcessExecutionClaim } = await import("./process-execution-claim.js");
 const { getBus, streamChannel } = await import("./bus.js");
 const { setSessionBroadcaster } = await import("../ops/session-bridge.js");
 const { subscribeSessionEvents } = await import("../chat-ws/session-event-observers.js");
@@ -156,6 +156,72 @@ describe("process relay browser delivery", () => {
   });
 });
 
+// A record is owed to the tabs only as far as some tab can receive it. One with
+// nothing for any tab is not sent and not waited on, so a journal made only of
+// those completes; before, each waited for a tab subscribed to its session, and
+// a headless session (mail watch, failure review, dream) never has one.
+describe("a relay record with nothing for any tab", () => {
+  const workerDone = (opId: string) => ({ type: "worker_done", opId, status: "completed", summary: "done" });
+  const canonical = (opId: string, type: string, body: Record<string, unknown>) => ({
+    opId, seq: 0, type, ts: new Date().toISOString(), body,
+  });
+
+  it("an event that has no browser form is done once the server has it, in any session", () => {
+    const fixture = createFixture("no-browser-form");
+    appendProcessRelayRecord(fixture.claim, fixture.sessionId, "canonical-event",
+      canonical(fixture.opId, "turn_started", { turnIdx: 0 }));
+    const socket = attachClient([fixture.sessionId]);
+    expect(reconcilePendingProcessRelay(fixture.opId)).toBe(3);
+    expect(ackTargets(fixture.opId).sort()).toEqual(["browser-render", "canonical-core", "session-observer"]);
+    expect(socket.send).not.toHaveBeenCalled();
+  });
+
+  it("a headless session's own event reaches its observers and no tab, and its journal goes once the worker lets go", () => {
+    const fixture = createFixture("headless", "mail-watch-abc123");
+    const observed: unknown[] = [];
+    const off = subscribeSessionEvents(fixture.sessionId, event => observed.push(event));
+    appendProcessRelayRecord(fixture.claim, fixture.sessionId, "session-event", workerDone(fixture.opId));
+    const socket = attachClient([fixture.sessionId]);
+    expect(reconcilePendingProcessRelay(fixture.opId)).toBe(2);
+    expect(ackTargets(fixture.opId).sort()).toEqual(["browser-render", "session-observer"]);
+    off();
+    expect(observed).toEqual([expect.objectContaining({ type: "worker_done" })]);
+    expect(socket.send).not.toHaveBeenCalled();
+    expect(existsSync(relayFolder(fixture.opId))).toBe(true); // the worker still holds its claim
+    removeProcessExecutionClaim(fixture.claim);
+    reconcilePendingProcessRelay(fixture.opId);
+    expect(existsSync(relayFolder(fixture.opId))).toBe(false);
+  });
+
+  it("a headless session's batch is its global events alone, which any tab acknowledges", () => {
+    const fixture = createFixture("headless-global", "dream-abc123");
+    appendProcessRelayRecord(fixture.claim, fixture.sessionId, "canonical-event",
+      canonical(fixture.opId, "state_changed", { from: "running", to: "succeeded", reason: "done" }));
+    const socket = attachClient([]);
+    reconcilePendingProcessRelay(fixture.opId);
+    const delivery = JSON.parse(socket.send.mock.calls[0][0]) as ProcessRelayBrowserAck & {
+      scope: string; ackRequired?: boolean; events: Array<{ type: string }>; eventIds: string[];
+    };
+    expect(delivery.scope).toBe("global");
+    expect(delivery.ackRequired).not.toBe(false);
+    expect(delivery.events.map(event => event.type)).toEqual(["bg_op_completed"]);
+    expect(delivery.eventIds).toEqual([`${delivery.deliveryId}:0`]);
+    expect(acknowledgeBrowserProcessRelay(delivery, false)).toBe(true);
+    expect(ackTargets(fixture.opId).sort()).toEqual(["browser-render", "canonical-core", "session-observer"]);
+  });
+
+  it("a session with tabs still waits for one of its tabs: the journal stays until it acknowledges", () => {
+    const fixture = createFixture("with-tabs", "chat-has-tabs");
+    appendProcessRelayRecord(fixture.claim, fixture.sessionId, "session-event", workerDone(fixture.opId));
+    attachClient([]);
+    reconcilePendingProcessRelay(fixture.opId);
+    expect(ackTargets(fixture.opId)).toEqual(["session-observer"]);
+    removeProcessExecutionClaim(fixture.claim);
+    reconcilePendingProcessRelay(fixture.opId);
+    expect(existsSync(relayFolder(fixture.opId))).toBe(true);
+  });
+});
+
 // A chat connection and a subscription ask for the pass without holding the
 // thread: it runs one op at a time and gives the event loop a turn between.
 describe("the background pass over pending relays", () => {
@@ -202,9 +268,12 @@ describe("the background pass over pending relays", () => {
   });
 });
 
-function createFixture(label: string) {
+function relayFolder(opId: string): string {
+  return join(dataDir, "operations", opId, "process-relay");
+}
+
+function createFixture(label: string, sessionId = `session-${label}`) {
   const opId = `op-browser-${label}-${Math.random().toString(16).slice(2)}`;
-  const sessionId = `session-${label}`;
   const now = new Date().toISOString();
   const op = {
     id: opId, type: "delegated_task", task: label, model: "test", lane: "background",

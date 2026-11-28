@@ -24,6 +24,7 @@ const {
   acknowledgeBrowserProcessRelay,
   reconcileAllPendingProcessRelays,
   reconcilePendingProcessRelay,
+  reconcilePendingProcessRelaysInBackground,
 } = await import("./process-relay-browser.js");
 
 afterEach(() => {
@@ -152,6 +153,52 @@ describe("process relay browser delivery", () => {
       .toEqual(["bg_op_completed", "worker_done"]);
     expect(acknowledgeBrowserProcessRelay(sessionDelivery, false)).toBe(false);
     expect(acknowledgeBrowserProcessRelay(sessionDelivery, true)).toBe(true);
+  });
+});
+
+// A chat connection and a subscription ask for the pass without holding the
+// thread: it runs one op at a time and gives the event loop a turn between.
+describe("the background pass over pending relays", () => {
+  const stateChanged = (opId: string) => ({
+    opId, seq: 0, type: "state_changed", ts: new Date().toISOString(),
+    body: { from: null, to: "queued", reason: "submitted" },
+  });
+
+  it("delivers what is pending to a page that has connected, as the all-at-once pass does", async () => {
+    const fixture = createFixture("background-all");
+    appendProcessRelayRecord(fixture.claim, fixture.sessionId, "canonical-event", stateChanged(fixture.opId));
+    const socket = attachClient([]);
+    await reconcilePendingProcessRelaysInBackground();
+    const sent = socket.send.mock.calls.map((call) => JSON.parse(call[0]) as ProcessRelayBrowserAck);
+    expect(sent.filter((d) => d.opId === fixture.opId)).toHaveLength(1);
+    expect(ackTargets(fixture.opId)).toEqual(["canonical-core", "session-observer"]);
+  });
+
+  it("reaches a session's records when asked for that session", async () => {
+    const fixture = createFixture("background-session");
+    appendProcessRelayRecord(fixture.claim, fixture.sessionId, "session-event", {
+      type: "worker_done", opId: fixture.opId, status: "completed", summary: "done",
+    });
+    const socket = attachClient([fixture.sessionId]);
+    await reconcilePendingProcessRelaysInBackground("some-other-session");
+    expect(socket.send.mock.calls.filter((call) => (JSON.parse(call[0]) as ProcessRelayBrowserAck).opId === fixture.opId)).toHaveLength(0);
+    await reconcilePendingProcessRelaysInBackground(fixture.sessionId);
+    expect(socket.send.mock.calls.filter((call) => (JSON.parse(call[0]) as ProcessRelayBrowserAck).opId === fixture.opId)).toHaveLength(1);
+  });
+
+  it("runs one pass at a time, and a request made during it gets a pass of its own after", async () => {
+    const early = createFixture("background-early");
+    appendProcessRelayRecord(early.claim, early.sessionId, "canonical-event", stateChanged(early.opId));
+    const first = reconcilePendingProcessRelaysInBackground();
+    // A page that connects after the pass has started: nothing has been sent to it yet.
+    const late = attachClient([]);
+    const second = reconcilePendingProcessRelaysInBackground();
+    expect(second).toBe(first);
+    await second;
+    const toLate = late.send.mock.calls.map((call) => JSON.parse(call[0]) as ProcessRelayBrowserAck);
+    expect(toLate.some((d) => d.opId === early.opId)).toBe(true);
+    // The pass has ended: the next request starts a new one.
+    expect(reconcilePendingProcessRelaysInBackground()).not.toBe(first);
   });
 });
 

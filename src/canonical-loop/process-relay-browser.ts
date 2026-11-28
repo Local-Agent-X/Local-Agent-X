@@ -23,6 +23,7 @@ import type {
 import { setProcessRelayParentHandler } from "./process-relay-parent-hook.js";
 import { listProcessRelayOperationIds } from "./process-relay-discovery.js";
 import { notifySessionEventObservers } from "../chat-ws/session-event-observers.js";
+import { yieldEventLoop } from "../util/time.js";
 
 setProcessRelayParentHandler(reconcilePendingProcessRelay);
 
@@ -39,13 +40,50 @@ export function reconcilePendingProcessRelay(opId: string): number {
   });
 }
 
+function reconcileQuietly(opId: string): number {
+  try { return reconcilePendingProcessRelay(opId); } catch { return 0; /* next janitor pass retries */ }
+}
+
 export function reconcileAllPendingProcessRelays(sessionId?: string): number {
   let applied = 0;
   for (const opId of listProcessRelayOperationIds()) {
     if (sessionId && readOp(opId)?.canonical?.sessionId !== sessionId) continue;
-    try { applied += reconcilePendingProcessRelay(opId); } catch { /* next janitor pass retries */ }
+    applied += reconcileQuietly(opId);
   }
   return applied;
+}
+
+let backgroundPass: Promise<void> | undefined;
+let wantEverySession = false;
+const wantSessions = new Set<string>();
+
+/**
+ * The same pass for a caller that must not hold the server's thread: one op
+ * at a time, with everything else given a turn between ops. Every new chat
+ * connection and every subscription asks for it, so a delivery still pending
+ * reaches the page that just arrived. Done all at once, the pass took a second
+ * of each connect on a store with a few hundred relay journals (profile,
+ * 2026-11-24).
+ *
+ * One pass runs at a time. A request made while one is running is folded into
+ * one more pass after it: the ops already passed were judged before the asker
+ * arrived. With no `sessionId` every op is reconciled; with one, that
+ * session's ops.
+ */
+export function reconcilePendingProcessRelaysInBackground(sessionId?: string): Promise<void> {
+  if (sessionId) wantSessions.add(sessionId); else wantEverySession = true;
+  return (backgroundPass ??= (async () => {
+    while (wantEverySession || wantSessions.size > 0) {
+      const every = wantEverySession;
+      const sessions = new Set(wantSessions);
+      wantEverySession = false;
+      wantSessions.clear();
+      for (const opId of listProcessRelayOperationIds()) {
+        if (every || sessions.has(readOp(opId)?.canonical?.sessionId ?? "")) reconcileQuietly(opId);
+        await yieldEventLoop();
+      }
+    }
+  })().finally(() => { backgroundPass = undefined; }));
 }
 
 export function acknowledgeBrowserProcessRelay(

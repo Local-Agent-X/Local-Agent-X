@@ -17,6 +17,7 @@ import { randomId } from "../src/util/ids.js";
 // journal state that doesn't exist in this test's throwaway home dir.
 vi.mock("../src/canonical-loop/public/process-relay.js", () => ({
   reconcileAllPendingProcessRelays: vi.fn(),
+  reconcilePendingProcessRelaysInBackground: vi.fn(async () => {}),
 }));
 // Replayed AGENTS-card ops are another test's concern; keep the dynamic
 // import from dragging the autopilot module graph into this one.

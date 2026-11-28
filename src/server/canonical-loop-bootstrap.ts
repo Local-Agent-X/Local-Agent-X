@@ -24,7 +24,7 @@ import { createLogger } from "../logger.js";
 import type { ServerContext } from "../server-context.js";
 import { watchOrphanedChatTurns } from "../routes/chat/run-chat-turn/orphaned-turn.js";
 import { restorePersistedAppBuildRuntimes } from "../tools/build-app-runtime.js";
-import { reconcileAllPendingProcessRelays } from "../canonical-loop/public/process-relay.js";
+import { reconcilePendingProcessRelaysInBackground } from "../canonical-loop/public/process-relay.js";
 import { reconcileTerminalContainerExecutions } from "../canonical-loop/public/container-recovery.js";
 import { warmOpIndex } from "../ops/op-index.js";
 
@@ -130,7 +130,7 @@ export function bootstrapCanonicalLoop(configReader?: () => LAXConfig, chatCtx?:
       // first pass over the store in one go, on the server's one thread.
       await timed("opIndex", () => warmOpIndex());
       const restored = await timed("restoreAppBuildRuntimes", () => restorePersistedAppBuildRuntimes());
-      await timed("processRelays", () => reconcileAllPendingProcessRelays());
+      await timed("processRelays", () => reconcilePendingProcessRelaysInBackground());
       await timed("containerExecutions", () => reconcileTerminalContainerExecutions());
       const recovered = await timed("staleOpSweep", () => sweepStaleCanonicalOpsCooperatively());
       const learned = await timed("learnedOutcomes", () => reconcileCanonicalLearnedOutcomes());

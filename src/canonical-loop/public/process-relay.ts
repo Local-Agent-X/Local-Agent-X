@@ -15,4 +15,5 @@ export {
 	buildBrowserDelivery,
 	acknowledgeBrowserProcessRelay,
 	reconcileAllPendingProcessRelays,
+	reconcilePendingProcessRelaysInBackground,
 } from "../process-relay-browser.js";

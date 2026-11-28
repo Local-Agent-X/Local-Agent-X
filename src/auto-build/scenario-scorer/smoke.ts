@@ -218,6 +218,27 @@ export async function smokeUrl(url: string, loadTimeoutMs = 30_000, signal?: Abo
 const INTERACT_SETTLE_MS = 800;
 const CLICK_TIMEOUT_MS = 5_000;
 
+const FIELD_TIMEOUT_MS = 1_000;
+const MAX_FIELDS_TYPED = 5;
+
+/** Type a sample value into the page's empty text and number fields, as a
+ *  person would before pressing the button. An "Add" that is disabled, or does
+ *  nothing, until something is typed otherwise leaves the click phase with
+ *  nothing to press, and the app's save path (its backend included) unrun.
+ *  Best-effort: a field that cannot be typed into is left alone. */
+async function typeIntoEmptyFields(page: OpenedPage["page"]): Promise<void> {
+  const fields = page.locator('input:not([type]), input[type="text"], input[type="search"], input[type="number"], textarea');
+  const count = Math.min(await fields.count().catch(() => 0), MAX_FIELDS_TYPED);
+  for (let i = 0; i < count; i++) {
+    const field = fields.nth(i);
+    try {
+      if ((await field.inputValue({ timeout: FIELD_TIMEOUT_MS })) !== "") continue;
+      const numeric = (await field.getAttribute("type", { timeout: FIELD_TIMEOUT_MS })) === "number";
+      await field.fill(numeric ? "12" : "Test", { timeout: FIELD_TIMEOUT_MS });
+    } catch { /* hidden, read-only or detached: not this page's way in */ }
+  }
+}
+
 async function clickPrimaryAndResmoke(
   opened: OpenedPage,
   opts: { screenshotPath?: string },
@@ -225,10 +246,13 @@ async function clickPrimaryAndResmoke(
   const { page, errors, pageErrors } = opened;
   const preClickErrorCount = errors.length;
   const preClickPageErrorCount = pageErrors.length;
+  await typeIntoEmptyFields(page);
   try {
     // getByRole("button") is the same semantic-locator family the scenario
     // driver resolves steps with: <button>, [role=button], input submit/button.
-    await page.getByRole("button").first().click({ timeout: CLICK_TIMEOUT_MS });
+    // The first one that can be pressed: a button still disabled after the
+    // fields were typed into is not the page's way in.
+    await page.getByRole("button", { disabled: false }).first().click({ timeout: CLICK_TIMEOUT_MS });
   } catch {
     // No button, or it isn't clickable (hidden, detached). Not a failure —
     // plenty of legitimate apps have no primary action on their first screen.

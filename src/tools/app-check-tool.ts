@@ -19,7 +19,11 @@ import { readAppBuildBrief } from "./build-app.js";
 const linkLine = (url: string): string =>
   `App URL: ${url} (include this URL verbatim in your reply to the user so it renders as a clickable link).`;
 
-const shotsLine = (shots: Array<string | undefined> | undefined): string => {
+/** The click phase types before it presses (scenario-scorer/smoke.ts), and an
+ *  app with a real store keeps what that saved. */
+const TYPED_NOTE = `\nThe check typed sample values ("Test", 12) into the app's empty fields before it clicked. If the app saves to a real store, remove what that saved before you hand the app over.`;
+
+const shotsLine =(shots: Array<string | undefined> | undefined): string => {
   const paths = (shots ?? []).filter((p): p is string => typeof p === "string");
   return paths.length ? `\nScreenshots: ${paths.join(", ")} (view them before you change anything).` : "";
 };
@@ -53,7 +57,7 @@ export function appCheckResult(appName: string, outcome: AppVerifyOutcome, lines
   }
   const look = outcome.judge === "passed" ? "its look was judged to match the brief" : outcome.judge === "unavailable" ? "its look was not judged (no model that can read images is signed in)" : "its look was not judged";
   return {
-    content: `APP READY: it loaded with no errors${outcome.interacted ? ", survived a click on its main action" : ""}, and ${look}.\n${linkLine(url)}${log}`,
+    content: `APP READY: it loaded with no errors${outcome.interacted ? ", survived a click on its main action" : ""}, and ${look}.${outcome.interacted ? TYPED_NOTE : ""}\n${linkLine(url)}${log}`,
     metadata: { app: appName, check: "verified" },
   };
 }

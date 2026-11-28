@@ -75,6 +75,8 @@ function harness(
     profileMs: PROFILE,
     profileEnabled: true,
     profileCooldownMs: COOLDOWN,
+    // Steady state unless a case opens the start-up window itself.
+    startupWindowMs: 0,
     collectSnapshot,
     captureProfile,
     observer,
@@ -104,6 +106,76 @@ describe("event-loop sentinel — healthy loop is silent and free", () => {
     const { log, advanceAndTick } = harness();
     for (const jitter of [3, 40, 120, 900, 1_800]) advanceAndTick(INTERVAL + jitter);
     expect(log.error).not.toHaveBeenCalled();
+  });
+});
+
+// A start is made of pauses far shorter than a stall. For the first minutes
+// they are logged, at info; after that the sentinel is as quiet as it was.
+describe("event-loop sentinel — start-up pauses", () => {
+  const STARTUP = { startupWindowMs: 180_000, startupWarnMs: 500 };
+  const infos = (log: { info: { mock: { calls: unknown[][] } } }) => log.info.mock.calls.map((c) => String(c[0]));
+  /** `ms` of samples that all land on time. */
+  const onTime = (advanceAndTick: (ms: number) => void, ms: number) => { for (let t = 0; t < ms; t += INTERVAL) advanceAndTick(INTERVAL); };
+
+  it("logs a pause under the stall threshold, with how long after start it ended", () => {
+    const { log, collectSnapshot, advanceAndTick } = harness(STARTUP);
+    for (let i = 0; i < 4; i++) advanceAndTick(INTERVAL);
+    advanceAndTick(INTERVAL + 1_240);
+    expect(infos(log)).toEqual(["[loop-sentinel] start-up pause: the event loop was held for 1240ms, ending 3.7s after start"]);
+    // Still not a stall: no snapshot, nothing at warn or error.
+    expect(collectSnapshot).not.toHaveBeenCalled();
+    expect(log.warn).not.toHaveBeenCalled();
+    expect(log.error).not.toHaveBeenCalled();
+  });
+
+  it("says nothing about a sample that is late by less than the bar", () => {
+    const { log, advanceAndTick } = harness(STARTUP);
+    for (const jitter of [3, 40, 120, 499]) advanceAndTick(INTERVAL + jitter);
+    expect(log.info).not.toHaveBeenCalled();
+  });
+
+  it("totals them once when the window closes, and is silent from then on", () => {
+    const { log, advanceAndTick } = harness(STARTUP);
+    advanceAndTick(INTERVAL + 700);
+    advanceAndTick(INTERVAL + 1_300);
+    onTime(advanceAndTick, 180_000);
+    expect(infos(log).at(-1)).toBe("[loop-sentinel] start-up: 2 pause(s) of 500ms or more in the first 180s, 2000ms in all, the longest 1300ms");
+    expect(log.info).toHaveBeenCalledTimes(3);
+
+    // Steady state: the same pauses go unlogged, and the total is not repeated.
+    for (let i = 0; i < 5; i++) advanceAndTick(INTERVAL + 2_000);
+    expect(log.info).toHaveBeenCalledTimes(3);
+    expect(log.error).not.toHaveBeenCalled();
+  });
+
+  it("says so when a start had none", () => {
+    const { log, advanceAndTick } = harness(STARTUP);
+    onTime(advanceAndTick, 181_000);
+    expect(infos(log)).toEqual(["[loop-sentinel] start-up: no pause of 500ms or more in the first 180s"]);
+  });
+
+  it("leaves a real stall to its own line, and counts it in the total", () => {
+    const { log, advanceAndTick } = harness(STARTUP);
+    advanceAndTick(INTERVAL + 7_400);
+    expect(log.error).toHaveBeenCalledTimes(1);
+    expect(log.error.mock.calls[0][0]).toContain("event loop blocked for 7400ms");
+    expect(log.info).not.toHaveBeenCalled();
+    onTime(advanceAndTick, 180_000);
+    expect(infos(log)).toEqual(["[loop-sentinel] start-up: 1 pause(s) of 500ms or more in the first 180s, 7400ms in all, the longest 7400ms"]);
+  });
+
+  it("is on unless turned off: 500ms and three minutes", () => {
+    const { log, advanceAndTick } = harness({ startupWindowMs: undefined, startupWarnMs: undefined });
+    advanceAndTick(INTERVAL + 499);
+    expect(log.info).not.toHaveBeenCalled();
+    advanceAndTick(INTERVAL + 500);
+    expect(log.info).toHaveBeenCalledTimes(1);
+    onTime(advanceAndTick, 176_000);
+    advanceAndTick(INTERVAL + 600); // 179.1s after start: still inside three minutes
+    expect(log.info).toHaveBeenCalledTimes(2);
+    onTime(advanceAndTick, 2_000);
+    expect(log.info).toHaveBeenCalledTimes(3);
+    expect(infos(log).at(-1)).toContain("start-up: 2 pause(s) of 500ms or more in the first 180s");
   });
 });
 
@@ -876,6 +948,9 @@ describe("event-loop sentinel — both halves agree a sleep was a sleep", () => 
       intervalMs: INTERVAL,
       warnMs: WARN,
       profileEnabled: false,
+      // Steady state: this case counts info lines, and a sleep that outlasts
+      // the start-up window would close it with a line of its own.
+      startupWindowMs: 0,
       collectSnapshot,
       observer,
     });

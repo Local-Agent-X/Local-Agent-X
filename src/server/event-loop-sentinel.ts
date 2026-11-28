@@ -44,6 +44,8 @@
  * Overrides:
  *   LAX_LOOP_SENTINEL_WARN_MS      threshold 1, default 5000
  *   LAX_LOOP_SENTINEL_PROFILE_MS   threshold 2, default 30000
+ *   LAX_LOOP_SENTINEL_STARTUP_WARN_MS    shortest start-up pause logged, default 500
+ *   LAX_LOOP_SENTINEL_STARTUP_WINDOW_MS  how long after start they are, default 180000
  *   LAX_LOOP_SENTINEL_PROFILE=0    disable CPU-profile capture entirely
  *   LAX_LOOP_SENTINEL_WORKER=0     disable the off-thread in-progress observer
  * On by default. That is the point.
@@ -57,6 +59,7 @@ import { getTurnRegistry } from "../session/turn-lock.js";
 import { createLogger, type Logger } from "../logger.js";
 import { createWorkerStallObserver, type StallObserver } from "./event-loop-sentinel-worker.js";
 import { defaultStallCapture } from "./rolling-stall-profile.js";
+import { createStartupPauses } from "./startup-pauses.js";
 
 const logger = createLogger("server.loop-sentinel");
 
@@ -65,6 +68,11 @@ const logger = createLogger("server.loop-sentinel");
 const SAMPLE_INTERVAL_MS = 500;
 const DEFAULT_WARN_MS = 5_000;
 const DEFAULT_PROFILE_MS = 30_000;
+/** Start-up only (startup-pauses.ts): a pause this long is logged, at info, for
+ *  this long after the sentinel is built. The op store's first pass and the
+ *  sync pull, the two long jobs a start runs, are over well inside it. */
+const DEFAULT_STARTUP_WARN_MS = 500;
+const DEFAULT_STARTUP_WINDOW_MS = 180_000;
 /** At most one profile per 10 minutes. That alone still allows 144 multi-MB
  *  files a day forever, so it is only half of "must not fill the disk" — see
  *  PROFILE_RETENTION. */
@@ -115,6 +123,10 @@ export interface EventLoopSentinelDeps {
   profileMs?: number;
   profileEnabled?: boolean;
   profileCooldownMs?: number;
+  /** Start-up pauses: the shortest one logged, and for how long after this
+   *  sentinel is built. A window of 0 turns them off. */
+  startupWarnMs?: number;
+  startupWindowMs?: number;
   /** Injected in tests so sampling touches no process/fs state. */
   collectSnapshot?: (lagMs: number) => StallSnapshot;
   /** Kicks off an async capture and synchronously returns its target path. */
@@ -310,6 +322,12 @@ export function createEventLoopSentinel(deps: EventLoopSentinelDeps = {}): Event
           });
 
   let lastTickAt = now();
+  const startup = createStartupPauses({
+    startedAt: lastTickAt,
+    windowMs: deps.startupWindowMs ?? readMsEnv("LAX_LOOP_SENTINEL_STARTUP_WINDOW_MS", DEFAULT_STARTUP_WINDOW_MS),
+    minMs: deps.startupWarnMs ?? readMsEnv("LAX_LOOP_SENTINEL_STARTUP_WARN_MS", DEFAULT_STARTUP_WARN_MS),
+    log,
+  });
   /** The worker's check count as of the previous sample — the baseline the
    *  suspension test compares against. */
   let checksAtLastTick: number | null = observer?.checks() ?? null;
@@ -329,6 +347,7 @@ export function createEventLoopSentinel(deps: EventLoopSentinelDeps = {}): Event
     // measures only its own gap and can never re-report this one.
     lastTickAt = at;
     checksAtLastTick = checks;
+    startup.sample(lagMs, at, lagMs >= warnMs);
     if (lagMs < warnMs) return; // healthy: nothing allocated, nothing logged
 
     const snapshot = snapshotOf(lagMs);

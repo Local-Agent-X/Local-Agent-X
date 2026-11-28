@@ -23,7 +23,7 @@ import type { DecideOutcomeInput } from "./decide-outcome.js";
 import type { ResolvedTurnLoopDeps } from "./turn-deps.js";
 import type { DriveTurnResult } from "./types.js";
 import { recoverAdapterThrow, clearAdapterThrowStreak } from "./adapter-throw-recovery.js";
-import { recoverReportedAdapterError } from "./reported-adapter-recovery.js";
+import { isDroppedTurn, recoverReportedAdapterError } from "./reported-adapter-recovery.js";
 import { elapsedMs, monotonicNow } from "../elapsed.js";
 
 export interface AdapterError {
@@ -149,6 +149,15 @@ export async function runModelCall(
     return { kind: "ended", turnResult: recoverAdapterThrow(op, e, turnIdx) };
   }
   watchdog.disarm();
+  // (read via a typed local: adapterError is assigned inside the stream
+  // callback, which TS's narrowing can't see — it types the direct read `never`)
+  const reportedError = adapterError as AdapterError | null;
+  const activity = { streamed: sawStreamContent, finalized: finalized.length, toolCalls: toolCalls.length, observedTools: observedTools.length };
+  // A dropped connection reported as an error is recovered like a thrown one,
+  // before the streak is cleared, so its retries stay bounded.
+  if (isDroppedTurn(reportedError, activity)) {
+    return { kind: "ended", turnResult: recoverAdapterThrow(op, new Error(reportedError.message), turnIdx) };
+  }
   // A model call that actually returned (success, or a reported kind:"error")
   // breaks the THROWN-error streak — the provider is responding again.
   clearAdapterThrowStreak(op.id);
@@ -157,13 +166,7 @@ export async function runModelCall(
   // forced-compact-and-retry as the thrown path — without this it would ride
   // adapterError straight to terminal "error" and kill the op. Bounded by the
   // recovery's own attempt cap; success clears the counter.
-  // (read via a typed local: adapterError is assigned inside the stream
-  // callback, which TS's narrowing can't see — it types the direct read `never`)
-  const reportedError = adapterError as AdapterError | null;
-  const recoveredReport = recoverReportedAdapterError(op, reportedError, turnIdx, {
-    streamed: sawStreamContent, finalized: finalized.length,
-    toolCalls: toolCalls.length, observedTools: observedTools.length,
-  });
+  const recoveredReport = recoverReportedAdapterError(op, reportedError, turnIdx, activity);
   if (recoveredReport) return { kind: "ended", turnResult: recoveredReport };
   const modelMs = elapsedMs(modelStart);
   const assistantText = finalized

@@ -50,6 +50,13 @@ describe("classify", () => {
     expect(classify(new Error("read ECONNRESET"))).toBe("network");
     expect(classify("socket hang up")).toBe("network");
     expect(classify(new Error("fetch failed"))).toBe("network");
+    // Node's fetch when the connection drops mid-body.
+    expect(classify(new TypeError("terminated"))).toBe("network");
+    expect(classify("Anthropic error: terminated")).toBe("network");
+    expect(classify("SocketError: other side closed")).toBe("network");
+    // A tool's own words about a process are not a dropped connection.
+    expect(classify("bash: the process was terminated")).not.toBe("network");
+    expect(classify("terminated the stale dev server on port 5173")).not.toBe("network");
   });
 
   it("flags overload / 5xx", () => {

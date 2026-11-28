@@ -96,6 +96,11 @@ const SIGNALS: CategorySignals[] = [
     phrases: [
       /\beconnrefused\b|\beconnreset\b|\benotfound\b|\beai_again\b|\bgetaddrinfo\b|\bsocket hang up\b|\bfetch failed\b|\bnetworkerror\b/i,
       /\bnetwork (?:error|failure|unreachable|is unreachable|request failed|connection)\b|\bdns (?:lookup|resolution|error|failure)\b/i,
+      // Node's fetch (undici) when the connection drops mid-body: the error is
+      // just "terminated" (cause: "other side closed", UND_ERR_SOCKET). Only as
+      // the whole message or after a "...: " prefix, so a tool's "process was
+      // terminated" stays a tool error (glasses chat, 2026-11-27).
+      /(?:^|:\s)terminated\s*$|\bother side closed\b|\bund_err_socket\b/i,
     ],
   },
   {

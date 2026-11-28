@@ -148,6 +148,7 @@ demand via tool search and aren't all listed here.)
 - `holdout_judge`
 - `device_check`
 - `build_decide` — Answer a build decision as the build's lead.
+- `build_next` — Lead a running app build: wait for its next result or decision.
 
 ### Secrets
 
@@ -161,4 +162,4 @@ demand via tool search and aren't all listed here.)
 - `figures_check` — Fact-check a deck's or document's figures against independent sources: the rest of them, or every one. _e.g._ "check the rest of the figures in that deck"
 
 ---
-_81 capabilities · 56 with a description · 25 awaiting a blurb (add one to the tool's policy row)._
+_82 capabilities · 57 with a description · 25 awaiting a blurb (add one to the tool's policy row)._

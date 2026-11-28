@@ -20,6 +20,7 @@
  * them (LEDGER_STEP). The engine first asks it for the entry and writes it
  * (lead-ledger.ts); the notice then only asks it to tell the owner.
  */
+import { leadIsAttached, postToLead } from "../advisor/lead-channel.js";
 import { nameFinishFixes } from "../finish-gates/fix-chunk.js";
 import type { ParsedChunk } from "../plan-parser.js";
 import { basename } from "node:path";
@@ -95,9 +96,15 @@ export function reportBuildToChat(end: BuildEnd): void {
   const named = (t: string) => nameFinishFixes(t, end.finishFixes ?? []);
   const raw = buildEndNotice(end);
   const notice = { summary: named(raw.summary), next: named(raw.next) };
-  pushPendingNotification(end.sessionId, {
-    opId: end.opId, status, summary: notice.summary, filesChanged: end.filesChanged, task,
-    completedAt: Date.now(), toolJob: { next: notice.next },
-  });
-  announceEndedOp(end.sessionId, { opId: end.opId, task, status }, false);
+  const wakeChat = () => {
+    pushPendingNotification(end.sessionId, {
+      opId: end.opId, status, summary: notice.summary, filesChanged: end.filesChanged, task,
+      completedAt: Date.now(), toolJob: { next: notice.next },
+    });
+    announceEndedOp(end.sessionId, { opId: end.opId, task, status }, false);
+  };
+  // A lead driving the build from its turn reads the end there (build_next);
+  // the chat is woken only if that turn ends without taking it.
+  if (leadIsAttached(end.sessionId)) postToLead(end.sessionId, { kind: "ended", text: `${task} has ended. ${notice.summary}\n${notice.next}`, undelivered: wakeChat });
+  else wakeChat();
 }

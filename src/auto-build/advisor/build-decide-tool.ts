@@ -82,6 +82,6 @@ export const buildDecideTool: ToolDefinition = {
     if ("error" in decision) return { content: decision.error, isError: true };
     const refused = resolveLeadDecision(id, decision);
     if (refused) return { content: refused, isError: true };
-    return { content: `Decision ${id}: ${decision.action}. The engine carries it out; end your turn.` };
+    return { content: `Decision ${id}: ${decision.action}. The engine carries it out. Leading the build with build_next: call it again. Otherwise end your turn.` };
   },
 };

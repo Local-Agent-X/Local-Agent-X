@@ -33,6 +33,7 @@ import { reportBuildToChat } from "./report-to-chat.js";
 import { writeLeadLedger } from "./lead-ledger.js";
 import * as state from "./state.js";
 import { canHaveLead } from "../advisor/lead-chat.js";
+import { noteLeadProgress } from "../advisor/lead-channel.js";
 import type { OrchestratorState } from "./state.js";
 import * as registry from "./registry.js";
 import { createLogger } from "../../logger.js";
@@ -216,9 +217,9 @@ export function startOrchestration(opts: StartOrchestrationOptions): StartOrches
       `op_id: ${opId}\n` +
       `project_dir: ${opts.projectDir}\n` +
       `chunks: ${opts.startingChunk} → ${opts.maxChunks ? opts.startingChunk + opts.maxChunks - 1 : opts.plan.chunks.length} of ${opts.plan.chunks.length}\n` +
-      `Live progress in the AGENTS sidebar. Do not poll for it (no sleep, no git log loops): end your turn now. ` +
-      `When the build halts or finishes, this chat is woken with the result and can carry on from there; ` +
-      `build_plan_status answers any time in between.`,
+      `Lead it from here: call build_next. It waits for the build and returns each batch's reports and reviews, ` +
+      `each decision that needs you, and the end; call it again after each. Do not poll any other way (no sleep, no git log loops). ` +
+      `If this turn ends first, the build goes on by its own rules and this chat is woken when it needs a decision or ends.`,
   };
 }
 
@@ -285,6 +286,7 @@ function onLoopEvent(orch: ActiveOrchestration, event: LoopEvent): void {
     opId: orch.opId,
     line: forOwner(orch, line),
   });
+  noteLeadProgress(orch.sessionId, forOwner(orch, line));
 }
 
 async function onLoopComplete(orch: ActiveOrchestration, result: LoopResult): Promise<void> {

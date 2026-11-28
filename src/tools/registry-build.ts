@@ -54,6 +54,7 @@ import { selfEditTool } from "./self-edit-tool.js";
 import { runBuildPlanTool } from "../auto-build/tool.js";
 import { startAppBuildTool } from "../auto-build/app-build-tool.js";
 import { buildPlanStatusTool, buildPlanResumeTool } from "../auto-build/orchestrator/tools.js";
+import { buildNextTool } from "../auto-build/orchestrator/build-next-tool.js";
 import { holdoutWriteTool, holdoutSealTool } from "../holdout/tools.js";
 import { holdoutJudgeTool } from "../auto-build/holdout-judge-tool.js";
 import { deviceCheckTool } from "../auto-build/device-check-tool.js";
@@ -71,7 +72,7 @@ export const allTools: ToolDefinition[] = applyPrompts([
   readTool, writeTool, editTool, editLinesTool, multiEditTool, bulkReplaceTool, deleteFileTool, restoreFileTool, bashTool, webFetchTool, comparePagesTool,
   globTool, grepTool, structuralSearchTool, reviewChangesTool, webSearchTool, imageSearchTool, _toolSearchTool,
   selfEditTool, recallTool, askUserTool, codeHandoffTool, sessionStartTool, runBuildPlanTool, startAppBuildTool,
-  buildPlanStatusTool, buildPlanResumeTool, holdoutWriteTool, holdoutSealTool, holdoutJudgeTool, deviceCheckTool, buildDecideTool,
+  buildPlanStatusTool, buildPlanResumeTool, holdoutWriteTool, holdoutSealTool, holdoutJudgeTool, deviceCheckTool, buildDecideTool, buildNextTool,
   viewImageTool, sendVideoTool, sendImageTool, showCardTool, sendFileTool, screenCaptureTool, listMonitorsTool, cameraCaptureTool, ocrTool, computerTool,
   transcribeMediaTool, readVideoFramesTool,
   buildAppTool, appRebuildTool,

@@ -8,13 +8,17 @@
  * waits; the lead answers by calling build_decide (build-decide-tool.ts), which
  * hands the decision back here. A lead that does not answer in time, or has no
  * chat to answer in, is no answer: the caller falls back to the engine's own
- * rules, so a lead can never stall a build. Each decision takes only the
+ * rules, so a lead can never stall a build. A lead that is driving the build
+ * from its own turn (build_next, lead-channel.ts) is handed the decision there,
+ * as that call's result, and nothing is posted unless its turn ends with the
+ * decision still open. Each decision takes only the
  * answers it lists; build_decide refuses the others, and the lead can answer
  * again in the same turn.
  */
 import { randomBytes } from "node:crypto";
 import { oweSessionTool, requireSessionTool } from "../../agent-request/prepare-request/session-owed-tools.js";
 import { leadChatOf, runLeadTurn, type BuildLeadRef } from "./lead-chat.js";
+import { postToLead, withdrawFromLead } from "./lead-channel.js";
 import { LEAD_ROLE } from "./lead-role.js";
 import { FIX_CHUNK_BASE } from "../finish-gates/fix-chunk.js";
 import { APP_MESSAGE_LEAD, appAnswerLine } from "../../harness-text.js";
@@ -183,22 +187,40 @@ async function ask(
   });
   // A turn that ended without answering is no answer.
   const endedUnanswered = (turn: Promise<unknown>) => turn.then(() => new Promise<typeof UNANSWERED>((r) => setTimeout(() => r(UNANSWERED), 1_000)));
+  const packet = render(id, first);
+  postToLead(sessionId, { kind: "decision", id, text: forBuildNext(packet, id) });
+  // Posted only if it is still open when the chat is free: a lead that took it
+  // from build_next and answered it has no message to read.
+  const stillOpen = (message: string) => () => {
+    if (!pending.has(id)) return null;
+    withdrawFromLead(sessionId, id);
+    return message;
+  };
   try {
-    const got = await Promise.race([answered, gaveUp, endedUnanswered(runLeadTurn(sessionId, render(id, first)).catch(() => undefined))]);
+    const got = await Promise.race([answered, gaveUp, endedUnanswered(runLeadTurn(sessionId, stillOpen(packet)).catch(() => undefined))]);
     if (got !== UNANSWERED || opts.signal?.aborted) return got === UNANSWERED ? null : got;
     // It worked the decision out and ended its turn without the call: asked
     // once more, in a turn that must open with it.
     const releaseRequired = requireSessionTool(sessionId, "build_decide");
     try {
-      const again = await Promise.race([answered, gaveUp, endedUnanswered(runLeadTurn(sessionId, answerNow(id)).catch(() => undefined))]);
+      const again = await Promise.race([answered, gaveUp, endedUnanswered(runLeadTurn(sessionId, stillOpen(answerNow(id))).catch(() => undefined))]);
       return again === UNANSWERED ? null : again;
     } finally {
       releaseRequired();
     }
   } finally {
     pending.delete(id);
+    withdrawFromLead(sessionId, id);
     releaseTool();
   }
+}
+
+/** The packet as build_next hands it over: the same evidence, without the
+ *  app-message header, and with the lead going on to the build afterwards. */
+function forBuildNext(packet: string, id: string): string {
+  return packet
+    .replace(`${HEADER}\n\n`, "")
+    .replace(answerLine(id), appAnswerLine("build_decide", "decision_id", id, "one call, then build_next again."));
 }
 
 const UNANSWERED = Symbol("the lead's turn ended with no answer");

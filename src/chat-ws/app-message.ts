@@ -32,7 +32,12 @@ export function sendAppMessageWhenIdle(sessionId: string, compose: () => string 
   const handler = getChatHandler();
   if (!handler) return false;
   if (hasActiveTurn(sessionId)) {
-    onTurnRelease(sessionId, () => { sendAppMessageWhenIdle(sessionId, compose, onEnded); });
+    // Deferred one macrotask: the release callbacks run while the turn still
+    // holds the slot, so a re-check made inside one saw the turn as running and
+    // hooked a release that had already fired. Every message asked for during
+    // a turn was lost that way (a build decision then waited out its ten
+    // minutes unanswered). Same deferral as the inject router's.
+    onTurnRelease(sessionId, () => { setImmediate(() => sendAppMessageWhenIdle(sessionId, compose, onEnded)); });
     return true;
   }
   const message = compose();

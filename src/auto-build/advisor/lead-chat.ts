@@ -50,12 +50,14 @@ export function leadChatOf(ref: BuildLeadRef): string | null {
  *  chunks can reach a decision together. */
 const queues = new Map<string, Promise<unknown>>();
 
-/** Post `message` into the lead's chat as the app's, after any post already
- *  queued and once no turn is running; resolves when the turn it starts ends. */
-export function runLeadTurn(sessionId: string, message: string): Promise<void> {
+/** Post a message into the lead's chat as the app's, after any post already
+ *  queued and once no turn is running; resolves when the turn it starts ends.
+ *  The message is composed when it is sent: null when there is nothing to
+ *  send any more (the lead took it in the turn it was in, lead-channel.ts). */
+export function runLeadTurn(sessionId: string, compose: () => string | null): Promise<void> {
   const prior = queues.get(sessionId) ?? Promise.resolve();
   const next = prior.catch(() => {}).then(() => new Promise<void>((resolve, reject) => {
-    if (!sendAppMessageWhenIdle(sessionId, () => message, resolve)) reject(new Error("the chat runner is not up"));
+    if (!sendAppMessageWhenIdle(sessionId, compose, resolve)) reject(new Error("the chat runner is not up"));
   }));
   queues.set(sessionId, next);
   void next.catch((e) => logger.warn(`[lead] ${sessionId} post failed: ${(e as Error).message}`)).finally(() => {

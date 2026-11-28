@@ -20,7 +20,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | Directory | Importers | Files | Size | Oversized |
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 197 | 32 | XL | 1 |
-| `src/security/` | 174 | 67 | XL | 2 |
+| `src/security/` | 175 | 67 | XL | 2 |
 | `src/tools/` | 152 | 270 | XL | 6 |
 | `src/tool-execution/` | 109 | 92 | XL | 2 |
 | `src/workspace/` | 102 | 4 | M |  |
@@ -38,9 +38,9 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/threat/` | 43 | 13 | L |  |
 | `src/auth/` | 38 | 11 | L |  |
 | `src/broker-transport/` | 32 | 53 | XL |  |
+| `src/context-manager/` | 31 | 18 | M |  |
 | `src/inbox/` | 31 | 8 | M |  |
 | `src/agent-store/` | 30 | 8 | M | 1 |
-| `src/context-manager/` | 30 | 18 | M |  |
 | `src/context/` | 28 | 11 | M |  |
 | `src/agent-request/` | 27 | 19 | L | 2 |
 | `src/app-runtime/` | 26 | 14 | L |  |
@@ -431,6 +431,7 @@ job. Comments are free: never cut them to fit.
 - `src/canonical-loop/agent-runner/runtime-surface.ts#rehydrateAgentRuntimeSurface` — 80+ own code lines (cap 100)
 - `src/canonical-loop/chat-runner/seed-messages.ts#seedOpMessages` — 80+ own code lines (cap 100)
 - `src/canonical-loop/soak-metrics.ts#finalize` — 80+ own code lines (cap 100)
+- `src/canonical-loop/turn-loop/compact-history.ts#summarizeOverThreshold` — 80+ own code lines (cap 100)
 - `src/classifiers/classify-with-llm.ts#classifyWithLLM` — 80+ own code lines (cap 100)
 - `src/conversation/ingest.ts#ingestSingleFile` — 80+ own code lines (cap 100)
 - `src/cron/cron-service-execute.ts#runJob` — 80+ own code lines (cap 100)
@@ -484,7 +485,6 @@ job. Comments are free: never cut them to fit.
 - `src/canonical-loop/provider-adapter-factory.ts#createProviderAdapterFactory` — 70+ own code lines (cap 100)
 - `src/canonical-loop/soak-metrics.ts#recordCanonicalEvent` — 70+ own code lines (cap 100)
 - `src/canonical-loop/turn-loop/build-input.ts#buildTurnInput` — 70+ own code lines (cap 100)
-- `src/canonical-loop/turn-loop/compact-history.ts#summarizeOverThreshold` — 70+ own code lines (cap 100)
 - `src/chat-ws/manager.ts#onEvent` — 70+ own code lines (cap 100)
 - `src/codex-client/stream-parse.ts#finalizeCompleted` — 70+ own code lines (cap 100)
 - `src/codex-message-convert.ts#convertMessagesToInput` — 70+ own code lines (cap 100)

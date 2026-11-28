@@ -17,6 +17,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../../context-manager/status.js", () => ({ getContextStatus: vi.fn() }));
 vi.mock("../../context-manager/compaction.js", () => ({ summarizeOldMessages: vi.fn() }));
+const carryMock = vi.hoisted(() => vi.fn<(opId: string | undefined) => string>(() => ""));
+vi.mock("./changed-files-line.js", () => ({ changedFilesCarry: carryMock }));
 
 const loggerMock = vi.hoisted(() => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }));
 vi.mock("../../logger.js", () => ({ createLogger: () => loggerMock }));
@@ -57,6 +59,8 @@ beforeEach(() => {
   loggerMock.debug.mockReset();
   loggerMock.error.mockReset();
   clearSummaryCache();
+  carryMock.mockReset();
+  carryMock.mockReturnValue("");
   mockStatus.mockReturnValue(status(80, true));
   // Deterministic summarizer: its bytes are a pure function of the head it is
   // given, so a per-turn re-summarize is DETECTABLE at index 0.
@@ -91,6 +95,17 @@ describe("compactHistory — summary stability across consecutive compacted turn
           .toBe(JSON.stringify(views[t - 1][i]));
       }
     }
+  });
+
+  it("carries the changed files into the block, captured once: a file written later does not move index 0", async () => {
+    carryMock.mockReturnValueOnce("[Files you have changed in this request: a.ts.]\n--- a.ts\nexport const a = 1;\n");
+    carryMock.mockReturnValue("[Files you have changed in this request: a.ts, b.ts.]\n--- b.ts\nexport const b = 2;\n");
+    const first = await compactHistory(historyAt(0), MODEL, null, OP);
+    const second = await compactHistory(historyAt(1), MODEL, null, OP);
+    const block = JSON.stringify(first.messages[0]);
+    expect(block).toContain("export const a = 1;");
+    expect(JSON.stringify(second.messages[0])).toBe(block);
+    expect(carryMock).toHaveBeenCalledTimes(1);
   });
 
   it("re-summarizes once the summarized head has grown past the refresh threshold", async () => {

@@ -36,6 +36,10 @@ interface Entry {
   /** Order-sensitive hash of those rows, so a stale/foreign head is never reused. */
   prefixHash: string;
   summary: string;
+  /** What the block carries besides the summary (changed files and their
+   *  contents, changed-files-line.ts), captured when the summary was made so
+   *  the block stays byte-identical until the next refresh. */
+  carry: string;
   touchedAt: number;
 }
 
@@ -72,14 +76,14 @@ export function reusableSummary(
   opId: string,
   messages: CanonicalMessage[],
   splitIdx: number,
-): { covered: number; summary: string } | null {
+): { covered: number; summary: string; carry: string } | null {
   const entry = cache.get(opId);
   if (!entry) return null;
   if (entry.covered <= 0 || entry.covered > splitIdx || entry.covered > messages.length) return null;
   if (splitIdx - entry.covered >= TURN_SUMMARY_REFRESH_MIN_GROWTH) return null;
   if (hashHead(messages, entry.covered) !== entry.prefixHash) return null;
   entry.touchedAt = Date.now();
-  return { covered: entry.covered, summary: entry.summary };
+  return { covered: entry.covered, summary: entry.summary, carry: entry.carry };
 }
 
 /** Record a freshly computed summary as the op's stable head summary. */
@@ -88,6 +92,7 @@ export function storeSummary(
   messages: CanonicalMessage[],
   covered: number,
   summary: string,
+  carry = "",
 ): void {
   if (!cache.has(opId) && cache.size >= MAX_TRACKED_OPS) {
     let oldestKey: string | undefined;
@@ -101,6 +106,7 @@ export function storeSummary(
     covered,
     prefixHash: hashHead(messages, covered),
     summary,
+    carry,
     touchedAt: Date.now(),
   });
 }

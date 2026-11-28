@@ -18,6 +18,7 @@ import { appFolderStartedBy, appStartNote, onAppFolderStarted } from "./app-tool
 import { appUrlHint, cardFileName, servedFileHint } from "./file-hints.js";
 import { connectorManifestWriteRejection } from "./connector-write-guard.js";
 import { buildImportAppendix, isJsFamilyFile } from "./read-imports.js";
+import { linesToRead } from "./read-range.js";
 import { deleteFolderToTrash } from "./delete-folder.js";
 import { extractOfficeText, isOfficeTextFile } from "./office-text.js";
 
@@ -74,7 +75,7 @@ export const readTool: ToolDefinition = {
     properties: {
       path: { type: "string", description: "File path to read" },
       offset: { type: "number", description: "Line number to start from (1-based)" },
-      limit: { type: "number", description: "Max number of lines to return. Honored only for files of 1000+ lines; a shorter file always comes back whole (from offset), since chunking a small file wastes calls." },
+      limit: { type: "number", description: "Max number of lines to return. A file under 1000 lines may come back whole (from offset) regardless, so read a short file in one call rather than in chunks." },
       include_imports: { type: "boolean", description: "When exploring code, set true to get the file's local (./ ../) imports appended in the same call instead of follow-up reads. ts/js-family files only, depth 1, capped. Default false." },
     },
     required: ["path"],
@@ -151,15 +152,12 @@ export const readTool: ToolDefinition = {
 
     try {
       const lines = content.split("\n");
-      // A file under 1000 lines ignores `limit` (weak models chunked small files
-      // into dozens of tiny reads), but honors `offset`: a result too big for the
-      // budget is cut at a whole line and names the offset that continues
-      // (tool-execution/read-budget.ts). Ignoring that offset returned the whole
-      // file, cut again at the same line — a loop that overflowed the window.
-      const forceFullRead = lines.length < 1000;
+      // `offset` is always honored: a result too big for the budget is cut at a
+      // whole line and names the offset that continues (tool-execution/
+      // read-budget.ts). Ignoring it returned the whole file, cut again at the
+      // same line — a loop that overflowed the window. `limit`: read-range.ts.
       const offset = Math.min(Math.max(0, ((args.offset as number) || 1) - 1), Math.max(0, lines.length - 1));
-      const limit = forceFullRead ? lines.length - offset : ((args.limit as number) || lines.length);
-      const slice = lines.slice(offset, offset + limit);
+      const slice = lines.slice(offset, offset + linesToRead(lines.length, offset, args));
       const numbered = slice.map((line, i) => `${offset + i + 1}\t${line}`).join("\n");
       const total = lines.length;
       const shown = slice.length;

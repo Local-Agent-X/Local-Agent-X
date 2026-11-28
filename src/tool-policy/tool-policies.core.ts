@@ -40,7 +40,7 @@ export const TOOL_POLICIES_CORE: Record<string, ToolPolicyRow> = {
 
   // ── Raw filesystem ──
   read: {
-    kernel: "file", ariAction: "read", risk: "safe", capabilities: ["sensitive-read"], tags: ["file-read"], essentialRank: 1, blurb: { does: "Read a file's contents." }, timeoutMs: 10_000, output: "file-content", pathArgs: [{ arg: "path", action: "read", knowsContent: true }],
+    kernel: "file", ariAction: "read", risk: "safe", capabilities: ["sensitive-read"], tags: ["file-read"], essentialRank: 1, blurb: { does: "Read a file's contents." }, timeoutMs: 10_000, output: "file-content", pathArgs: [{ arg: "path", action: "read", knowsContent: true }], reads: ["operation"],
     loop: { discovery: true, mechanical: true },
     prompt: "Use read for files instead of bash cat/head/tail. Supports offset/limit for large files. When exploring code, pass include_imports:true to get the file's local imports in the same call instead of follow-up reads.",
     rules: [{ id: "allow-read", decision: "allow", reason: "File read (path-checked by SecurityLayer)", priority: 50 }],

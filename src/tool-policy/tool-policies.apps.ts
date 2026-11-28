@@ -120,9 +120,15 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyRow> = {
   // by design: timeoutMs 0, since killing a real long-runner is the bigger bug.
   // A build reports to, and its workflow state belongs to, the chat that
   // started or resumed it; its builder installs packages and fetches assets.
-  build_app:             { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["app-build"], essentialRank: 12, blurb: { say: "build me a todo app", does: "Build a working app from a description." }, timeoutMs: 0, reads: ["session"], category: "coding",
+  build_app:             { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["app-build"], essentialRank: 12, blurb: { say: "build me a todo app", does: "Start an app from a description: set up its folder and return the build brief." }, timeoutMs: 0, reads: ["session"], category: "coding", companions: ["app_check"],
     reach: { kind: "indirect-network", why: "its builder installs packages and fetches assets" }, hiddenFrom: { ide: "an in-editor chat does not spawn builds" },
     rules: [{ id: "allow-build-app", decision: "allow", reason: "Build workspace apps", priority: 50 }] },
+  // app_check loads the app the chat built in a headless browser, clicks it,
+  // has it judged, and runs the project's structure check (app-check-tool.ts).
+  // It writes the screenshots beside the app and may start the app's dev server.
+  app_check:             { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["app-build"], blurb: { does: "Check an app you built: load it, click it, judge it against the brief." }, timeoutMs: 0, reads: ["session", "operation"], category: "coding",
+    hiddenFrom: { ide: "an in-editor chat has its own live preview" },
+    rules: [{ id: "allow-app-check", decision: "allow", reason: "Check a workspace app the chat built", priority: 50 }] },
   // The manifest names the upstream the connector proxy will then reach, so
   // the call is gated as the off-box sink it opens. It runs the secret
   // destination ladder, whose same-session rung is keyed on the session.

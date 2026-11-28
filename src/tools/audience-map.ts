@@ -203,6 +203,8 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   // /\bapp\b|dashboard|tracker/ rule surfaces app_* on the messages that
   // need them (same path as email_*/calendar_*).
   build_app: ["main-chat"],
+  // build_app's brief ends "then call app_check": wherever one is, the other is.
+  app_check: ["main-chat"],
   // Eager beside build_app: the direct-write route needs it before the first
   // app UI write, and a deferred tool would cost a tool_search first.
   app_design_brief: ["main-chat"],

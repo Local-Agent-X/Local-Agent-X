@@ -16,6 +16,7 @@ import { transcribeMediaTool, readVideoFramesTool } from "./media-read-tools.js"
 import { sendFileTool } from "./file-delivery-tools.js";
 import { computerTool } from "./input-tools.js";
 import { buildAppTool } from "./build-app.js";
+import { appCheckTool } from "./app-check-tool.js";
 import { appRebuildTool } from "./app-rebuild-tool.js";
 import { createPageTool } from "./create-page-tool.js";
 import { extractSiteAssetsTool } from "./asset-tools.js";
@@ -75,7 +76,7 @@ export const allTools: ToolDefinition[] = applyPrompts([
   buildPlanStatusTool, buildPlanResumeTool, holdoutWriteTool, holdoutSealTool, holdoutJudgeTool, deviceCheckTool, buildDecideTool, buildNextTool,
   viewImageTool, sendVideoTool, sendImageTool, showCardTool, sendFileTool, screenCaptureTool, listMonitorsTool, cameraCaptureTool, ocrTool, computerTool,
   transcribeMediaTool, readVideoFramesTool,
-  buildAppTool, appRebuildTool,
+  buildAppTool, appCheckTool, appRebuildTool,
   youtubeAnalyzeTool, createPageTool, extractSiteAssetsTool, connectorCreateTool, appServeBackendTool,
   ...processTools,
   ...spreadsheetTools, ...documentTools, ...presentationTools, ...pdfTools, ...chartTools, brandTool, ...previewTools,

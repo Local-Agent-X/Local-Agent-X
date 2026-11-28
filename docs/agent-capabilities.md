@@ -126,7 +126,8 @@ demand via tool search and aren't all listed here.)
 
 ### Apps. app_create/app_list are deferred
 
-- `build_app` — Build a working app from a description. _e.g._ "build me a todo app"
+- `build_app` — Start an app from a description: set up its folder and return the build brief. _e.g._ "build me a todo app"
+- `app_check` — Check an app you built: load it, click it, judge it against the brief.
 - `app_design_brief` — Load the house design system before writing an app's UI by hand. _e.g._ "add a habit tracker to my sidebar"
 - `connector_create`
 - `app_serve_backend`
@@ -162,4 +163,4 @@ demand via tool search and aren't all listed here.)
 - `figures_check` — Fact-check a deck's or document's figures against independent sources: the rest of them, or every one. _e.g._ "check the rest of the figures in that deck"
 
 ---
-_82 capabilities · 57 with a description · 25 awaiting a blurb (add one to the tool's policy row)._
+_83 capabilities · 58 with a description · 25 awaiting a blurb (add one to the tool's policy row)._

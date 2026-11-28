@@ -44,7 +44,6 @@ const EXPECTED_SITES = [
   "canonical-loop/verification-submit.ts",
   "ops/tools/shared.ts",
   "routes/chat/delegation-handoff.ts",
-  "tools/build-app.ts",
 ];
 
 function walk(dir: string, out: string[] = []): string[] {

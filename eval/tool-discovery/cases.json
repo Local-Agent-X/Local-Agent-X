@@ -34,7 +34,7 @@
 
     { "id": "image.view",              "message": "look at workspace/screenshot.png and tell me what's in it",        "expected": ["view_image"], "mustNotCall": ["read", "bash"] },
 
-    { "id": "build.app",               "message": "build me a pomodoro timer app",                                    "expected": ["build_app"], "mustNotCall": ["write", "edit"] },
+    { "id": "build.app",               "message": "build me a pomodoro timer app",                                    "expected": ["build_app"] },
 
     { "id": "protocol.find",           "message": "is there a saved playbook for posting to twitter?",                "expected": ["protocol_search", "protocol_list"], "mustNotCall": ["bash", "memory_search"] },
 

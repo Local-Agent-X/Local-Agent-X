@@ -1,10 +1,15 @@
 /**
- * build_app — the canonical-loop app builder.
+ * build_app — the start of an app the chat builds itself.
  *
- * Spawns an `app_build` canonical op rather than blocking the chat turn on
- * a CLI subprocess. Returns immediately with an op-submitted chip; progress
- * streams in the AGENTS sidebar; APP_READY: <url> emits when done.
+ * It sizes the request, sets up the app's folder and returns the build brief;
+ * the chat then writes the app in the conversation and has it checked
+ * (app-check-tool.ts). Until 2026-11-27 it handed the build to a background
+ * `app_build` op and told the chat not to build; the owner's call was that a
+ * chat builds what it is asked for, as a second chat is always free to talk in.
+ * The helpers below (provider, model, strategy) and the op runtime
+ * (build-app-runtime.ts) now serve only an `app_build` op restored from disk.
  *
+ * What an app_build op was:
  * Strategy split (from the app-builder agent template's providerStrategy):
  *   - in-canonical-sub-agent — the default for every provider: the
  *     provider's HTTP adapter drives the turn_loop with
@@ -18,48 +23,22 @@
  *
  * This tool is the collapse of the legacy build_app + build_app_canonical.
  */
-import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getSetting } from "../settings.js";
-import { getRuntimeConfig, workspacePath } from "../config.js";
+import { workspacePath } from "../config.js";
 import type { ToolDefinition } from "../types.js";
 import { PROVIDERS } from "../providers/registry.js";
-import type { ProviderId } from "../providers/provider-ids.js";
-import { resolveCredential } from "../auth/resolve.js";
-import {
-  APP_CHAT_TOOL_HINT,
-  renderPerBuildContext,
-  renderPersonaPrompt,
-  listAssetsDir,
-  readUpdateContextFiles,
-  renderBuilderPrompt,
-} from "./render-builder-prompt.js";
+import { APP_CHAT_TOOL_HINT, renderPerBuildContext, listAssetsDir } from "./render-builder-prompt.js";
 import { AgentTemplateStore, type AgentExecStrategy } from "../agent-store/index.js";
 import { appEnvironmentNotes, seedAppTemplate } from "./app-tools/app-template.js";
 import { applyProjectKit } from "../app-scaffold/project-kit.js";
-import {
-  gatherPriorBuildSessions,
-  renderPriorBuildBlock,
-  evidenceImagesFromPriorSessions,
-} from "./build-session-context.js";
-import { buildContextPack } from "../ops/context-pack-builder.js";
-import { newOpId } from "../ops/op-store.js";
-import { getRetryPolicy } from "../ops/heartbeat.js";
-import { trackOpForSession } from "../ops/session-bridge.js";
-import {
-  canonicalLoopEntry,
-  appendOpMessage,
-} from "../canonical-loop/index.js";
-import type { Op, OpVisibility } from "../ops/types.js";
 import { resolveAppTier, tierLabel, formatClarify, type AppTier } from "./app-tier.js";
 import { checkBuildCollision } from "./build-app-collision.js";
 import { selectDesignBrief } from "./design-brief.js";
-import { recordDesignSpec } from "../canonical-loop/index.js";
-import { registerAppBuildRuntime } from "./build-app-runtime.js";
-import { cliBuildDeveloperModeRefusal } from "./build-app-cli-gate.js";
+import { markDesignDelivered } from "./app-tools/design-gate.js";
 import { OP_TYPE } from "../ops/op-types.js";
-import { runtimeOf, sessionIdOf } from "../tool-execution/internal-args.js";
+import { sessionIdOf } from "../tool-execution/internal-args.js";
 import { selfPort } from "../security/layer/loopback-grant.js";
 
 export const APP_BUILD_OP_TYPE = OP_TYPE.appBuild;
@@ -156,19 +135,68 @@ export function resolveBuildStrategy(provider: string): AgentExecStrategy {
   return (strategy[provider] ?? strategy.default ?? "in-canonical-sub-agent");
 }
 
+/** What a build started with, kept beside the app so its check (app-check-tool.ts)
+ *  judges it against what was asked, in a later turn or after a restart. */
+export interface AppBuildBrief {
+  prompt: string;
+  tier: AppTier;
+  /** The build creates the app; false when it changes one that exists. */
+  newBuild: boolean;
+  /** The design system the build was given (a new app only). */
+  designSpec?: string;
+}
+
+const BRIEF_FILE = join(".lax-build", "brief.json");
+
+export function writeAppBuildBrief(appDir: string, brief: AppBuildBrief): void {
+  mkdirSync(join(appDir, ".lax-build"), { recursive: true });
+  writeFileSync(join(appDir, BRIEF_FILE), JSON.stringify(brief, null, 2) + "\n");
+}
+
+/** The brief the app's last build started with; null for an app written without build_app. */
+export function readAppBuildBrief(appDir: string): AppBuildBrief | null {
+  try {
+    const raw = JSON.parse(readFileSync(join(appDir, BRIEF_FILE), "utf-8")) as Partial<AppBuildBrief>;
+    if (typeof raw.prompt !== "string" || typeof raw.tier !== "string") return null;
+    return { prompt: raw.prompt, tier: raw.tier as AppTier, newBuild: raw.newBuild === true, ...(typeof raw.designSpec === "string" ? { designSpec: raw.designSpec } : {}) };
+  } catch {
+    // No brief, or one that does not parse: the app is checked without one.
+    return null;
+  }
+}
+
+/** What the chat does after the brief: build it here, then have it checked. */
+function buildItHere(appName: string, appDir: string, tier: AppTier): string {
+  // The serving and process tools the larger sizes call are not in every
+  // chat's tool list from the start.
+  const serving = tier === "quick-html" ? [] : [
+    "If a tool the rules above name (app_serve_frontend, app_serve_backend, process_start, process_status, process_kill) is not in your tool list, load it with tool_search first.",
+  ];
+  return [
+    "",
+    "BUILD IT YOURSELF, NOW, IN THIS CONVERSATION. No worker is building this: you are.",
+    ...serving,
+    `1. Write the files under ${appDir}/ with your own write and edit tools (and the shell, where the size above calls for a real toolchain or server).`,
+    `2. When it is built, call app_check({"name": "${appName}"}). It loads the app headlessly, clicks its main action, has the result judged against this brief, and runs the structure check. Do not open the app in the browser tool to check it yourself.`,
+    "3. Fix what app_check reports and call it again. Give the user the app's link only once app_check returns it.",
+  ].join("\n");
+}
+
 export const buildAppTool: ToolDefinition = {
   name: "build_app",
-  compactDescription: "Build a complete web app in workspace/apps/. Returns an op id immediately; the build streams progress and emits APP_READY: <url> when done. For NEW apps and LARGE rewrites — small edits use read + edit.",
+  compactDescription: "Start a web app in workspace/apps/: sets up its folder and returns the build brief. You then write the app yourself and call app_check. For NEW apps and LARGE rewrites; small edits use read + edit.",
   description:
-    "Build a complete web app in workspace/apps/. Returns an op id immediately; the build runs as an app_build canonical op (sidebar streams progress; APP_READY: <url> emits on completion). Use this for NEW apps and LARGE rewrites. For small edits to existing apps, prefer read + edit directly. " +
+    "Start building a web app in workspace/apps/. It sizes the request, sets up the app's folder (a starter page, or the structure kit for a project), " +
+    "and returns the build brief: where the files go, the rules for this size of app, and the design system. You then build the app yourself in this " +
+    "conversation with write/edit (and the shell where needed), and call app_check when it is built; app_check loads and judges it and returns the link. " +
+    "Use this for NEW apps and LARGE rewrites. For small edits to existing apps, prefer read + edit directly. " +
     APP_CHAT_TOOL_HINT,
-  describeCall: (args) => `Build app: ${String(args.name || "")}`,
+  describeCall: (args) => `Start app: ${String(args.name || "")}`,
   parameters: {
     type: "object",
     properties: {
       name: { type: "string", description: "App directory name (e.g. 'trading-bot', 'todo-app')" },
       prompt: { type: "string", description: "Build brief — what to make, target features, styling notes, behavior. Be specific." },
-      backend: { type: "string", enum: ["codex", "claude", "auto"], description: "Which model builds the app. 'auto' (default) matches your active provider. 'codex' = GPT, 'claude' = Claude. All build over HTTP (no CLI subprocess) unless a provider is explicitly pinned to cli-subprocess in the app-builder template, which also requires developer_mode." },
       update: { type: "boolean", description: "Set true ONLY when modifying an EXISTING app under the same name — e.g. user said 'make it green', 'update X', 'add Y to it'. Omit/false for a new app; if the name collides, the tool refuses rather than overwrite. For a new variant on the same theme, pick a different name instead." },
     },
     required: ["name", "prompt"],
@@ -179,30 +207,14 @@ export const buildAppTool: ToolDefinition = {
     // failure 2026-05-14 on Anthropic Opus 4.7 — prompt missing, description
     // present. Schema docs the right key; alias keeps back-compat.
     const prompt = String(args.prompt || args.description || "");
-    const backend = String(args.backend || "auto");
-    const sessionId = sessionIdOf(args) ?? "";
-    // The chat turn handler stamps the chat's provider and model via the
-    // bootstrap-tools wrapper around build_app (plugins.ts). When the LLM didn't
-    // pin an explicit backend, prefer the chat's active provider so the
-    // dropdown selection wins over whatever's stale in ~/.lax/settings.json.
-    const chatRuntime = runtimeOf(args);
-    const forcedProvider = pickForcedProviderFromRuntime(backend, chatRuntime.provider);
-
-    const provider = resolveBuildProvider(backend, forcedProvider ? { forcedProvider } : {});
-    const strategy = resolveBuildStrategy(provider);
-    // Refused before the tier classifier spends a model call on a build that cannot run.
-    const cliRefusal = strategy === "cli-subprocess" ? cliBuildDeveloperModeRefusal(provider) : null;
-    if (cliRefusal) return { content: cliRefusal, isError: true };
     const resolved = await resolveAppTier(prompt);
     // Materially-ambiguous brief ("a mega computer") → surface the scoped
     // question instead of blind-building; harness backstop for tool-shy models.
     if (typeof resolved !== "string") return { content: formatClarify(resolved), isError: false };
     const tier = resolved;
-    const buildModel = resolveBuildModel(provider, chatRuntime.model);
 
     const appDir = workspacePath("apps", appName);
-    const port = selfPort();
-    const appUrl = `http://127.0.0.1:${port}/apps/${appName}/index.html`;
+    const appUrl = `http://127.0.0.1:${selfPort()}/apps/${appName}/index.html`;
 
     // Collision guard before mkdir so a refused build leaves no empty dir
     // behind. Caller must pass update:true to modify an existing app.
@@ -237,138 +249,22 @@ export const buildAppTool: ToolDefinition = {
     }
     if (!isUpdate && !realBuildTier) seedAppTemplate(appDir, appName);
 
-    // Updates carry the prior session's spine (original brief + last build's
-    // final report + any verify-gate rejection) ahead of the file snapshot —
-    // the fixer remembers building the app instead of re-diagnosing cold.
-    const priorSessions = isUpdate ? gatherPriorBuildSessions(appUrl, APP_BUILD_OP_TYPE) : [];
-    const priorBlock = renderPriorBuildBlock(priorSessions);
-    // Screenshot evidence from a gate-rejected prior build rides the seeded
-    // message as image refs — the in-canonical fixer SEES the broken render
-    // instead of imagining it from prose. filePath refs keep op_messages
-    // small; the Anthropic-CLI strategy gets the on-disk path hint instead.
-    const evidenceImages = evidenceImagesFromPriorSessions(priorSessions);
-    const contextFiles = isUpdate
-      ? [...(priorBlock ? [priorBlock] : []), ...readUpdateContextFiles(appDir)]
-      : [];
-    const assetFiles = listAssetsDir(appDir);
-
-    const perBuildContext = renderPerBuildContext({
-      appName, prompt, appDir, appUrl, isUpdate, contextFiles, assetFiles, tier,
+    // The brief is the builder's own: the rules for this size of app and the
+    // design system, which the chat now follows itself. An update names no
+    // files: the chat reads what it changes (the brief's update rules say so).
+    const brief = renderPerBuildContext({
+      appName, prompt, appDir, appUrl, isUpdate, contextFiles: [], assetFiles: listAssetsDir(appDir), tier,
     });
-    // cli-subprocess path expects the full legacy prompt (per-build context
-    // + WEBSITE_RULES_FRAGMENT when applicable). Composed via the legacy
-    // renderer so the subprocess gets a byte-identical prompt to pre-migration.
-    const cliPrompt = renderBuilderPrompt({
-      appName, prompt, appDir, appUrl, isUpdate, contextFiles, assetFiles, tier,
+    // The brief carries the design system, so the app's UI writes are not held for it.
+    markDesignDelivered(sessionIdOf(args), appName);
+    writeAppBuildBrief(appDir, {
+      prompt, tier, newBuild: !isUpdate,
+      ...(isUpdate ? {} : { designSpec: selectDesignBrief(prompt).brief }),
     });
-
-    const tierCriteria = tier === "full-stack"
-      ? [`a real backend is running (started via app_serve_backend, which verifies it bound its port) and index.html reaches it through its dev connector`]
-      : tier === "frontend-spa"
-        ? [`a REAL framework project was scaffolded (package.json + framework config + src/) and a live dev server is running via app_serve_frontend (it verifies the port bound) — NOT a static index.html that mimics the framework`]
-        : tier === "compiled-native"
-          ? [`the real toolchain was actually run (not a browser reimplementation); index.html shows the program's real output`]
-          : [];
-    // The credential the build's adapter will run on (build-app-runtime.ts →
-    // createAppBuildAdapter resolves `provider`'s credential the same way).
-    // cost-recording.ts books the op's ledger row under routing.authSource and
-    // checkpoint-stop.ts judges the spend ceiling by it; absent, a build on a
-    // subscription (oauth) box was counted as real API spend.
-    const credential = await resolveCredential(provider as ProviderId, {
-      configOpenAIKey: provider === "openai" ? getRuntimeConfig().openaiApiKey : undefined,
-    });
-    const contextPack = await buildContextPack({
-      description: `Build ${tierLabel(tier)} "${appName}" (${strategy})`,
-      successCriteria: [`APP_READY: <url> emitted`, `index.html written to ${appDir}`, ...tierCriteria],
-      constraints: [],
-      lane: "build",
-      preferredProvider: provider,
-      authSource: credential?.source,
-      budget: BUILD_APP_BUDGET,
-    });
-
-    const op: Op = {
-      id: newOpId(`op_${APP_BUILD_OP_TYPE}`),
-      ...(sessionId ? { sessionId } : {}),
-      type: APP_BUILD_OP_TYPE,
-      task: `Build app "${appName}"`,
-      appUrl,
-      contextPack,
-      lane: "build",
-      retryPolicy: getRetryPolicy(APP_BUILD_OP_TYPE),
-      ownerId: "local-user",
-      visibility: "private" as OpVisibility,
-      status: "pending",
-      createdAt: new Date().toISOString(),
-      attemptCount: 0,
-    };
-
-    const personaPrompt = renderPersonaPrompt();
-    op.runtimeDescriptor = {
-      kind: "app-build",
-      strategy,
-      provider,
-      appName,
-      appDir,
-      appUrl,
-      prompt: cliPrompt,
-      brief: prompt,
-      systemPrompt: personaPrompt,
-      adapterSessionId: sessionId || undefined,
-      model: buildModel,
-      tier,
-      isUpdate,
-    };
-
-    const runtime = registerAppBuildRuntime(op, op.runtimeDescriptor);
-    if (!runtime.registered) {
-      return {
-        content: runtime.errorMessage ?? "Product Build owns this project.",
-        isError: true,
-      };
-    }
-
-    if (sessionId) trackOpForSession(op.id, sessionId, op.task);
-
-    // Stash the mandated design spec so the vision judges score token adherence
-    // (feeds the design-verify refine nudge). Create-only, like the prompt brief.
-    if (!isUpdate) recordDesignSpec(op.id, selectDesignBrief(prompt).brief);
-
-    // Pre-seed the turn-0 user message with the per-build context so the
-    // in-canonical agent sees the exact prompt the legacy CLI received. The
-    // worker's seedInitialUserMessage will see this and skip its own seeding.
-    // For cli-subprocess this row is harmless (the adapter ignores message
-    // history), but keeping it consistent simplifies the test surface.
-    appendOpMessage({
-      messageId: `um-${op.id}-init-${randomUUID().slice(0, 8)}`,
-      opId: op.id,
-      turnIdx: 0,
-      seqInTurn: 0,
-      role: "user",
-      content: {
-        text: perBuildContext,
-        ...(evidenceImages.length > 0 ? { images: evidenceImages } : {}),
-      },
-      createdAt: new Date().toISOString(),
-    });
-
-    canonicalLoopEntry(op, sessionId ? { sessionId } : {});
 
     return {
-      content:
-        `App build queued — op ${op.id} (strategy=${strategy}, provider=${provider}, lane=build).\n` +
-        `This op owns the ENTIRE build and will deliver the result to the user itself when done. ` +
-        `Do NOT build it yourself this turn (no bash/cargo, no write/edit of source, no send_image) — that duplicates the work. ` +
-        `Do NOT open the app in the browser tool to "check" it — the build op already loads, clicks, and screenshots the app HEADLESSLY before reporting done (the [verify] lines are the receipt); a browser call just pops a pointless Chrome window at the user. ` +
-        `Just briefly tell the user it's building; they'll see it when APP_READY emits.\n` +
-        `Cancel: op_kill(op_id="${op.id}")`,
-      metadata: {
-        chip: {
-          kind: "op-submitted",
-          label: `Building ${appName}`,
-          opId: op.id,
-        },
-      },
+      content: `${isUpdate ? "Update" : "New app"} "${appName}" (${tierLabel(tier)}) is set up at ${appDir}.\n\n${brief}\n${buildItHere(appName, appDir, tier)}`,
+      metadata: { app: appName, tier, update: isUpdate },
     };
   },
 };

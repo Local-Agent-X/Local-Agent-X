@@ -121,7 +121,7 @@ export const appDesignBrief: ToolDefinition = {
     "Get the house design system for the app you are about to write UI files for (index.html, CSS, components): " +
     "this session's project folder (the folder a code session is bound to, or the app this chat builds), or an app under workspace/apps/ named by `app`. " +
     "Call it once per app per conversation, before the first write; the first UI write to a new app that hasn't had it is rejected. " +
-    "build_app applies it itself, so this is for apps you write directly.",
+    "build_app's brief already carries it, so this is for apps you write without build_app.",
   parameters: {
     type: "object",
     properties: {

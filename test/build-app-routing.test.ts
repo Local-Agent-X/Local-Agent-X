@@ -8,11 +8,11 @@
  *   - resolveBuildStrategy reads the right strategy from the app-builder
  *     template's providerStrategy map: every provider → in-canonical-sub-agent
  *     (the default), unless one is explicitly pinned to cli-subprocess.
- *   - buildAppTool.execute returns the canonical-shape result (op-submitted
- *     chip + opId; the op lands in the store with type "app_build").
+ *   - buildAppTool.execute sets the app's folder up and returns the build
+ *     brief for the chat to build from; it queues no background op.
  */
 import { describe, it, expect, afterAll, afterEach, beforeAll, vi } from "vitest";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -29,16 +29,16 @@ vi.mock("../src/config.js", async (importOriginal) => {
 
 import {
   buildAppTool,
+  readAppBuildBrief,
   pickForcedProviderFromRuntime,
   resolveBuildProvider,
   resolveBuildStrategy,
-  APP_BUILD_OP_TYPE,
 } from "../src/tools/build-app.js";
+import { designDelivered } from "../src/tools/app-tools/design-gate.js";
 import { builderToolsForTier } from "../src/tools/build-app-runtime.js";
 import { checkBuildCollision } from "../src/tools/build-app-collision.js";
 import { AgentTemplateStore } from "../src/agent-store/index.js";
 import { TOOLS } from "../src/tool-registry.js";
-import { readOp } from "../src/ops/op-store.js";
 import {
   opCancel,
   resetCanonicalRuntime,
@@ -331,26 +331,51 @@ describe("checkBuildCollision — overwrite guard", () => {
   });
 });
 
-describe("build_app — canonical-shape result", () => {
-  it("returns the op-submitted chip and lands an op in the store", async () => {
+// Until 2026-11-27 build_app queued a background op and told the chat not to
+// build. The owner's call: the chat builds what it is asked for. build_app now
+// sets the folder up and hands the chat the builder's brief.
+describe("build_app — the chat builds the app itself", () => {
+  it("sets up the folder, returns the brief, and queues no background build", async () => {
     const appName = `routing-test-${Date.now()}`;
-    const r = await buildAppTool.execute({
-      name: appName,
-      prompt: "A tiny smoke-test app — should queue an op_app_build_* op.",
-      backend: "auto",
-      _sessionId: "test-session-routing",
-    });
-    expect(r.isError).toBeFalsy();
-    const chip = (r.metadata?.chip ?? {}) as { kind?: string; opId?: string };
-    expect(chip.kind).toBe("op-submitted");
-    expect(typeof chip.opId).toBe("string");
-    expect(chip.opId).toMatch(/^op_app_build_/);
-    if (chip.opId) submittedOpIds.push(chip.opId);
+    const appDir = workspacePath("apps", appName);
+    try {
+      const r = await buildAppTool.execute({
+        name: appName,
+        prompt: "A tiny tip calculator with a bill field and a tip slider.",
+        _sessionId: "test-session-routing",
+      });
+      expect(r.isError).toBeFalsy();
+      expect(r.metadata?.chip).toBeUndefined();
+      const text = String(r.content);
+      // The builder's own brief: where the files go, the rules, the design system.
+      expect(text).toContain(`You are building a web app in the directory: ${appDir}`);
+      expect(text).toContain("A tiny tip calculator");
+      expect(text).toContain("BUILD IT YOURSELF, NOW, IN THIS CONVERSATION");
+      expect(text).toContain(`app_check({"name": "${appName}"})`);
+      // The starter is there to edit, and the brief is kept for the check.
+      expect(existsSync(join(appDir, "index.html"))).toBe(true);
+      expect(readAppBuildBrief(appDir)).toMatchObject({ prompt: "A tiny tip calculator with a bill field and a tip slider.", tier: "quick-html", newBuild: true });
+      // Its UI writes are not held for the design system: the brief carried it.
+      expect(designDelivered("test-session-routing", appName)).toBe(true);
+    } finally {
+      try { rmSync(appDir, { recursive: true, force: true }); } catch { /* swallow */ }
+    }
+  });
 
-    const op = chip.opId ? readOp(chip.opId) : null;
-    expect(op?.type).toBe(APP_BUILD_OP_TYPE);
-
-    try { rmSync(workspacePath("apps", appName), { recursive: true, force: true }); } catch { /* swallow */ }
+  it("an update keeps the app's files and is recorded as one", async () => {
+    const appName = `routing-update-${Date.now()}`;
+    const appDir = workspacePath("apps", appName);
+    try {
+      mkdirSync(appDir, { recursive: true });
+      writeFileSync(join(appDir, "index.html"), "<html>existing</html>", "utf-8");
+      const r = await buildAppTool.execute({ name: appName, prompt: "make the header green", update: true, _sessionId: "test-session-routing" });
+      expect(r.isError).toBeFalsy();
+      expect(String(r.content)).toContain("Task: UPDATE existing app");
+      expect(readFileSync(join(appDir, "index.html"), "utf-8")).toBe("<html>existing</html>");
+      expect(readAppBuildBrief(appDir)).toMatchObject({ newBuild: false });
+    } finally {
+      try { rmSync(appDir, { recursive: true, force: true }); } catch { /* swallow */ }
+    }
   });
 });
 

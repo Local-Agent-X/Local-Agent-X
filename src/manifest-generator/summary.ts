@@ -97,7 +97,7 @@ export function summarizeManifest(manifest: AppManifest): string {
     "- **Connect WhatsApp**: `http_request` → `POST {{APP_URL}}/api/whatsapp/connect`",
     "- **Connect Telegram**: `http_request` → `POST {{APP_URL}}/api/telegram/connect`",
     "- **Schedule recurring tasks**: the `mission_schedule_create` tool (list/update/toggle/delete siblings)",
-    "- **Build a standalone app**: use `build_app` tool — creates in `workspace/apps/{name}/`",
+    "- **Build a standalone app**: `build_app` sets up `workspace/apps/{name}/` and returns the brief; write the app yourself, then `app_check`",
     "- **Pin/unpin sidebar**: use `sidebar_pin` / `sidebar_unpin` tools",
     "- **Clear sidebar Conversations list**: use `sidebar_clear` (removes them from the lists on every device; every chat stays on disk and in memory)",
     "- **Turn a tool family on or off**: the `setting` tool (`enableShell`, `enableHttp`, `enableBrowser`, `enableComputerControl`)",

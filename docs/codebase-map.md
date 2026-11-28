@@ -13,18 +13,18 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 75 top-level dirs · 75 live · 0 with no live importer · 2222 non-test source files · 58 oversized · 277 nearing the size cap.
+**Totals:** 75 top-level dirs · 75 live · 0 with no live importer · 2224 non-test source files · 57 oversized · 276 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | Oversized |
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 198 | 32 | XL | 1 |
-| `src/security/` | 175 | 67 | XL | 2 |
-| `src/tools/` | 152 | 271 | XL | 6 |
-| `src/tool-execution/` | 114 | 92 | XL | 2 |
+| `src/security/` | 176 | 67 | XL | 2 |
+| `src/tools/` | 153 | 272 | XL | 5 |
+| `src/tool-execution/` | 115 | 92 | XL | 2 |
 | `src/workspace/` | 102 | 4 | M |  |
-| `src/canonical-loop/` | 100 | 305 | XL | 6 |
+| `src/canonical-loop/` | 100 | 306 | XL | 6 |
 | `src/util/` | 87 | 5 | S |  |
 | `src/providers/` | 80 | 28 | L | 1 |
 | `src/session/` | 80 | 15 | L |  |
@@ -36,7 +36,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/tool-policy/` | 48 | 22 | L |  |
 | `src/local-runtimes/` | 45 | 28 | XL |  |
 | `src/threat/` | 43 | 13 | L |  |
-| `src/auth/` | 38 | 11 | L |  |
+| `src/auth/` | 37 | 11 | L |  |
 | `src/broker-transport/` | 32 | 53 | XL |  |
 | `src/context-manager/` | 31 | 18 | M |  |
 | `src/inbox/` | 31 | 8 | M |  |
@@ -300,7 +300,6 @@ Burn-down targets: find the job that grew and move it to a module named after it
 - `src/tool-execution/pre-dispatch.ts#assertToolCallAllowed`
 - `src/tool-execution/require-approval.ts#requireApprovalPhase`
 - `src/tools/app-tools/app-template.ts#renderStarterHtml`
-- `src/tools/build-app.ts#buildAppTool.execute`
 - `src/tools/email-mutate-tools.ts#withSession:callback`
 - `src/tools/http-request.ts#tool.execute`
 - `src/tools/secret-tools.ts#createSecretTools`
@@ -542,7 +541,6 @@ job. Comments are free: never cut them to fit.
 - `src/browser/secret-capture.ts#createBrowserSecretCaptureTool` — 60+ own code lines (cap 100)
 - `src/browser/secret-capture.ts#withBrowserLock:callback` — 60+ own code lines (cap 100)
 - `src/canonical-loop/adapters/app-build-smoke-gate.ts#evaluateSmoke` — 60+ own code lines (cap 100)
-- `src/canonical-loop/adapters/app-build-verify-adapter.ts#AppBuildVerifyAdapter.smokeAndJudge` — 60+ own code lines (cap 100)
 - `src/canonical-loop/adapters/openai-compat/resolve-target.ts#resolveOpenAICompatTarget` — 60+ own code lines (cap 100)
 - `src/canonical-loop/chat-runner/create-op.ts#createChatOp` — 60+ own code lines (cap 100)
 - `src/canonical-loop/chat-runner/message-convert.ts#opMessageRowToChatParam` — 60+ own code lines (cap 100)

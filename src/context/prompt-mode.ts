@@ -39,7 +39,7 @@ const LEFT_OUT_OF_CODE_MODE: Readonly<Record<string, string | null>> = {
     "project already does what is asked, it means Local Agent X; when it is still unclear, ask which.",
   "how-to-work": null,
   "browser": "**The web.** `browser` opens, reads and clicks through pages; `web_search` and `web_fetch` look things up.",
-  "apps-pages": "**Pages and apps in Local Agent X.** `app_design_brief`, `build_app` and `start_app_build` make a page or app the user opens inside the app.",
+  "apps-pages": "**Pages and apps in Local Agent X.** `app_design_brief`, `build_app` (then `app_check`) and `start_app_build` make a page or app the user opens inside the app.",
   "memory": "**What you know about the user.** `memory_search` recalls their preferences and past work; `memory_save` keeps a new one.",
   "personality": null,
   "self-modification": "**Your own behavior** (`config/`). Only `self_edit` changes it, in developer mode; otherwise tell the user the change you would make.",

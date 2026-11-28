@@ -26,6 +26,10 @@ export type {
 
 export { STRUCTURE_NOTE_MARKER, VERIFY_EVIDENCE_MARKER } from "../adapters/app-build-verify-adapter.js";
 
+// The checks a built app passes, for the chat's own check of an app it wrote
+// (tools/app-check-tool.ts).
+export { verifyBuiltApp, type AppVerifyGates, type AppVerifyInput, type AppVerifyOutcome } from "../adapters/app-build-verify-checks.js";
+
 export { withTransportRetry } from "../adapters/transport-retry.js";
 
 export { registerFrameworkDevServerFromDisk } from "../adapters/app-build-finalize.js";

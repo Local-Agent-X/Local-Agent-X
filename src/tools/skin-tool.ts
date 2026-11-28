@@ -28,6 +28,7 @@ export function describeSkin(s: Skin): string {
     `${s.name}${activeSlug() === s.slug ? " (on now)" : ""}`,
     `Colors: ${colors || "none (the chosen palette's colors are used)"}`,
     `Background: ${s.background ? `${s.background}, ${s.fit}, blur ${s.blur}px, dim ${s.dim}` : "none"}`,
+    `App graphic (the agent figure behind the chat): ${s.graphic ?? !s.background ? "shown" : "hidden"}`,
     `Panels: ${Math.round(s.opacity * 100)}% solid`,
     `Moving layer: ${fx ? `${fx.kind} (density ${fx.density}, speed ${fx.speed}, size ${fx.size}${fx.reactive ? ", grows as context fills" : ""})` : "none"}`,
   ].join("\n");
@@ -50,6 +51,7 @@ function inputOf(args: Record<string, unknown>): SkinInput {
   if (colors) input.colors = colors as Skin["colors"];
   if (typeof args.fit === "string") input.fit = args.fit as Skin["fit"];
   for (const k of ["opacity", "blur", "dim"] as const) if (typeof args[k] === "number") input[k] = args[k] as number;
+  if (typeof args.graphic === "boolean") input.graphic = args.graphic;
   if (args.effect === "none" || args.effect === null) input.effect = null;
   else { const effect = objArg(args.effect); if (effect) input.effect = effect as SkinInput["effect"]; }
   return input;
@@ -118,6 +120,7 @@ export const skinTool: ToolDefinition = {
     "(\"make it Christmassy\", \"put my photo behind the chat\", \"animated background\"). " +
     "Actions: list; get; save (create or change, and turn it on unless apply:false: colors {bg, surface, text, accent} as hex, " +
     `fit ${SKIN_FITS.join(" | ")}, opacity 0.15–1 (how solid the panels are; lower shows more background), blur 0–40, dim 0–0.9, ` +
+    "graphic true | false (whether the app's own agent-figure graphic shows behind the chat; by default it is hidden once the theme has a background), " +
     `effect {kind: ${SKIN_BUILTIN_EFFECTS.join(" | ")}, density, speed, size (each 0.2–3, 1 = normal), reactive (true = grows as the chat's context fills)} or "none"); ` +
     `set_background (path to a ${SKIN_BACKGROUND_EXT.join("/")} file, up to 10 MB; make one with the image tool first if the user wants a generated picture); ` +
     "clear_background; apply (name, or \"none\" for the built-in look); remove. " +
@@ -137,6 +140,7 @@ export const skinTool: ToolDefinition = {
       opacity: { type: "number", description: "(save) 0.15–1: how solid the panels are over the background." },
       blur: { type: "number", description: "(save) 0–40: background blur in px." },
       dim: { type: "number", description: "(save) 0–0.9: how far the background fades toward the base color, so text stays readable." },
+      graphic: { type: "boolean", description: "(save) Show the app's own graphic (the agent figure and skyline) behind the chat, over the theme's background." },
       effect: { description: "(save) The moving layer: {kind, density, speed, size, reactive}, or \"none\"." },
       apply: { type: "boolean", description: "(save) false saves without turning it on." },
       path: { type: "string", description: "(set_background) The picture or video to copy in." },

@@ -3,7 +3,7 @@
 // (public/js/skin.js).
 //
 // GET  /api/skins                    → { skins: Skin[], active: slug | "", effects: string[] }
-// POST /api/skins/save               { ref?, skin: { name, colors, fit, opacity, blur, dim, effect } }
+// POST /api/skins/save               { ref?, skin: { name, colors, fit, opacity, blur, dim, graphic, effect } }
 // POST /api/skins/background         { skin, upload: "/uploads/<file>", name }  — copies a file the page uploaded
 // POST /api/skins/remove-background  { skin }
 // POST /api/skins/remove             { skin }
@@ -36,7 +36,7 @@ export function activeSkinSlug(): string {
 function inputOf(raw: unknown): SkinInput {
   if (!raw || typeof raw !== "object") return {};
   const r = raw as Record<string, unknown>;
-  const pick = ["name", "colors", "fit", "opacity", "blur", "dim", "effect"] as const;
+  const pick = ["name", "colors", "fit", "opacity", "blur", "dim", "graphic", "effect"] as const;
   return Object.fromEntries(pick.filter((k) => k in r).map((k) => [k, r[k]])) as SkinInput;
 }
 

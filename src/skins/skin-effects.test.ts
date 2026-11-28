@@ -47,10 +47,11 @@ describe("skin effects", () => {
     expect(page("css/app.css")).toMatch(/color-mix\(in srgb, var\(--surface\) var\(--panel-solid,82%\), transparent\)/);
   });
 
-  it("a skin's background replaces the built-in hero art instead of sitting on top of it", () => {
-    expect(page("css/app.css")).toMatch(/body\.skin-on #chat-bg\{display:none\}/);
-    // skin-on is set only when the skin has a background of its own.
-    expect(page("js/skin.js")).toMatch(/classList\.toggle\('skin-on', !!\(skin && skin\.background\)\)/);
+  it("the app's own graphic can be turned off, and a skin's background hides it unless the skin asks for it", () => {
+    expect(page("css/app.css")).toMatch(/body\.no-hero #chat-bg\{display:none\}/);
+    const skin = page("js/skin.js");
+    expect(skin).toMatch(/return typeof skin\.graphic === 'boolean' \? skin\.graphic : !skin\.background;/);
+    expect(skin).toMatch(/classList\.toggle\('no-hero', !showsGraphic\(skin\)\)/);
   });
 
   it("the active skin is its own setting, so the appearance default can never reset it", () => {

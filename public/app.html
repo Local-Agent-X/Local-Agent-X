@@ -1402,7 +1402,14 @@
             <button class="theme-card" data-palette="bloom" onclick="setPalette('bloom')"><div class="theme-card-preview" style="--ps:#1a0f18;--ps-l:#f5e6ef;--pv:#f65b9c;--pv-l:#d21e6e"><span class="tcp-bar" style="width:62%"></span><span class="tcp-bar dim" style="width:46%"></span><span class="tcp-chip"></span></div><div class="theme-card-body"><div class="theme-card-name">Bloom</div><div class="theme-card-desc">Magenta pop</div></div></button>
             <button class="theme-card" data-palette="graphite" onclick="setPalette('graphite')"><div class="theme-card-preview" style="--ps:#141417;--ps-l:#ececef;--pv:#9aa0b5;--pv-l:#4a4f63"><span class="tcp-bar" style="width:62%"></span><span class="tcp-bar dim" style="width:46%"></span><span class="tcp-chip"></span></div><div class="theme-card-body"><div class="theme-card-name">Graphite</div><div class="theme-card-desc">Grayscale — minimal and focused</div></div></button>
           </div>
-          <div class="appearance-row" style="margin-top:22px;margin-bottom:0">
+          <div class="appearance-row" style="margin-top:22px">
+            <div>
+              <div class="section-title">LAX graphic</div>
+              <div class="section-desc" style="margin-bottom:0">The agent figure and skyline behind the chat. A theme of your own has its own switch for it.</div>
+            </div>
+            <div class="toggle" id="tog-hero" onclick="laxSkin.setGraphic(!this.classList.contains('on'));this.classList.toggle('on')" role="switch" aria-label="Show the LAX graphic behind the chat"></div>
+          </div>
+          <div class="appearance-row" style="margin-bottom:0">
             <div>
               <div class="section-title">Animated background</div>
               <div class="section-desc">A moving layer behind the app, in the current colors. A theme of your own can carry its own, which plays instead.</div>
@@ -1852,7 +1859,7 @@
 <script src="/js/skin-effects-builtin.js?v=v1"></script>
 <script src="/js/phrase-rain.js?v=v2"></script>
 <script src="/js/skin-effect-frame.js?v=v1"></script>
-<script src="/js/skin.js?v=v1"></script>
+<script src="/js/skin.js?v=v2"></script>
 <script src="/js/shared-desktop.js?v=v1"></script>
 <script src="/js/shared-escape.js?v=v1"></script>
 <script src="/js/shared-md.js?v=v5"></script>
@@ -2042,7 +2049,7 @@
 <script src="/js/settings-watching.js?v=v1"></script>
 <script src="/js/settings-calendars.js?v=v1"></script>
 <script src="/js/settings-brands.js?v=v2"></script>
-<script src="/js/settings-skins.js?v=v1"></script>
+<script src="/js/settings-skins.js?v=v2"></script>
 <script src="/js/settings-learned-workflows.js?v=v1"></script>
 <script src="/js/settings-recurring-problems.js?v=v1"></script>
 <script src="/js/settings-memory-changes.js?v=v1"></script>
@@ -2054,7 +2061,7 @@
 <script src="/js/settings-uploads.js?v=v1"></script>
 <script src="/js/settings-voice-engines.js?v=v1"></script>
 <script src="/js/settings-hq.js?v=v1"></script>
-<script src="/js/settings.js?v=vc6"></script>
+<script src="/js/settings.js?v=vc7"></script>
 <script src="/js/voice-picker-catalog.js?v=v3"></script>
 <!-- voice-picker split: core defines the `let` cache vars + _esc that
      the other two read from shared script scope, so it must load first. -->

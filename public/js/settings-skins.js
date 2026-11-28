@@ -79,6 +79,7 @@
         slider('skin-opacity', 'Panels: see-through to solid', 15, 100, Math.round(s.opacity * 100), 'How much of the background shows through the sidebars and message box.') +
         slider('skin-blur', 'Background blur', 0, 40, s.blur) +
         slider('skin-dim', 'Background dim', 0, 90, Math.round(s.dim * 100), 'Fades the background so text stays easy to read.') +
+        '<label class="skin-color"><input type="checkbox" id="skin-graphic"' + (window.laxSkin.showsGraphic(s) ? ' checked' : '') + '>Show the LAX graphic behind the chat</label>' +
       '</div><div class="skin-fields">' +
         COLORS.map(function (c) {
           var has = !!s.colors[c[0]];
@@ -113,6 +114,7 @@
       fit: $('skin-fit').value,
       opacity: +$('skin-opacity').value / 100, blur: +$('skin-blur').value, dim: +$('skin-dim').value / 100,
       colors: colors,
+      graphic: $('skin-graphic').checked,
       effect: kind ? { kind: kind, density: +$('skin-fx-density').value / 100, speed: +$('skin-fx-speed').value / 100, size: +$('skin-fx-size').value / 100, reactive: $('skin-fx-reactive').checked } : null
     };
   }

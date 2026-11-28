@@ -55,6 +55,14 @@ describe("skin store", () => {
     expect(saveSkin({ name: "Text only", colors: { text: "#000000" } }).colors).toEqual({});
   });
 
+  it("keeps the skin's word on the app's graphic, and no word when it has none", () => {
+    expect(saveSkin({ name: "Plain" }).graphic).toBeUndefined();
+    expect(saveSkin({ graphic: true }, "plain").graphic).toBe(true);
+    expect(saveSkin({ blur: 3 }, "plain").graphic).toBe(true);
+    expect(saveSkin({ graphic: false }, "plain").graphic).toBe(false);
+    expect(normalizeSkin({ name: "x", graphic: "yes" }, "x")!.graphic).toBeUndefined();
+  });
+
   it("refuses the custom effect until the skin has code", () => {
     saveSkin({ name: "Own" });
     expect(() => saveSkin({ effect: { kind: "custom" } }, "own")).toThrow(/no effect code yet/);

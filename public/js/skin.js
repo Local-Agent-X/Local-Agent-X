@@ -8,7 +8,11 @@
 //                 UI, blurred and dimmed as the skin says;
 //   • panels    → --panel-solid, how solid the sidebars and the composer are
 //                 over it (app.css; the same rule the moving layer uses);
-//   • effect    → handed to skin-effects.js.
+//   • effect    → handed to skin-effects.js;
+//   • graphic   → whether the app's own art behind the chat (#chat-bg) shows.
+//                 A skin says so itself; without a word from it the art shows
+//                 unless the skin has a background, which it would sit on top
+//                 of. With no skin on, it is the user's switch in Appearance.
 // --bg and --surface stay opaque hex: the desktop title bar and the phone's
 // status bar are painted from them (shared-theme.js).
 //
@@ -17,6 +21,7 @@
 // Opening the app with ?skin=off turns the skin off, whatever it contains.
 (function () {
   var CACHE_KEY = 'lax_skin_cache';
+  var GRAPHIC_KEY = 'lax_graphic';       // '0' = the built-in look hides the app's graphic
   var VARS = ['--bg', '--surface', '--surface-2', '--border', '--text', '--muted', '--hover', '--user-bg', '--agent-bg',
     '--input-bg', '--accent', '--accent-dim', '--skin-blur', '--skin-dim', '--panel-solid'];
   var skins = [], active = '', shown = null, bgEl = null, codeOf = {};
@@ -90,6 +95,13 @@
     bgEl.appendChild(dim);
   }
 
+  function graphicChoice() { try { return localStorage.getItem(GRAPHIC_KEY) !== '0'; } catch (e) { return true; } }
+  /** Whether the app's own graphic shows behind the chat with `skin` on (null: the built-in look). */
+  function showsGraphic(skin) {
+    if (!skin) return graphicChoice();
+    return typeof skin.graphic === 'boolean' ? skin.graphic : !skin.background;
+  }
+
   async function effectOf(skin) {
     var fx = skin && skin.effect;
     if (!fx) return null;
@@ -118,6 +130,7 @@
     }
     paintBackground(skin);
     document.body.classList.toggle('skin-on', !!(skin && skin.background));
+    document.body.classList.toggle('no-hero', !showsGraphic(skin));
     // The mode follows the skin's panels (forcedMode), and the native chrome
     // is re-sampled from the colors now on <html>.
     if (typeof applyTheme === 'function') applyTheme(localStorage.getItem('lax_theme') || 'dark');
@@ -159,9 +172,17 @@
       var c = shown && shown.colors, panel = c && (c.surface || c.bg);
       return panel ? (isDark(panel) ? 'dark' : 'light') : null;
     },
+    /** The Appearance switch for the app's graphic under the built-in look. */
+    graphicOn: graphicChoice,
+    setGraphic: function (on) {
+      try { localStorage.setItem(GRAPHIC_KEY, on ? '1' : '0'); } catch (e) {}
+      document.body.classList.toggle('no-hero', !showsGraphic(shown));
+    },
+    showsGraphic: showsGraphic,
     fileUrl: fileUrl
   };
 
+  document.body.classList.toggle('no-hero', !showsGraphic(null));
   if (new URLSearchParams(location.search).get('skin') === 'off') {
     try { localStorage.removeItem(CACHE_KEY); } catch (e) {}
     if (typeof persistSetting === 'function') persistSetting({ skin: '' });

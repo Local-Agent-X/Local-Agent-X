@@ -2456,10 +2456,10 @@ body:is(.fx-on,.skin-on) .ide-sidebar,
 body:is(.fx-on,.skin-on) .ide-panel,
 body:is(.fx-on,.skin-on) .agent-feeds,
 body:is(.fx-on,.skin-on) #input-area{background:color-mix(in srgb, var(--surface) var(--panel-solid,82%), transparent)}
-/* A skin's own background replaces the built-in hero art behind the chat
-   (#chat-bg); the two are never shown mashed together. A skin with only
-   colors or a moving layer keeps the art, tinted to its accent. */
-body.skin-on #chat-bg{display:none}
+/* The app's own graphic behind the chat (#chat-bg) can be turned off: in
+   Appearance for the built-in look, and per skin. A skin with a background
+   of its own hides it unless the skin asks for it (skin.js sets no-hero). */
+body.no-hero #chat-bg{display:none}
 /* Settings → Appearance → My themes */
 .skin-card-preview{height:92px;background-color:var(--surface-2);background-size:cover;background-position:center;display:flex;align-items:flex-end;gap:5px;padding:8px}
 .skin-card-preview span{width:16px;height:16px;border-radius:4px;border:1px solid rgba(128,128,128,.5)}

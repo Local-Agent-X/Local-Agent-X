@@ -155,6 +155,8 @@ function refreshAppearanceUI() {
   const palette = localStorage.getItem('lax_palette') || 'aurora';
   document.querySelectorAll('#mode-seg .seg-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
   document.querySelectorAll('#theme-grid .theme-card').forEach(c => c.classList.toggle('active', c.dataset.palette === palette));
+  const hero = document.getElementById('tog-hero');
+  if (hero && window.laxSkin) hero.classList.toggle('on', window.laxSkin.graphicOn());
   const fx = document.getElementById('fx-select');
   if (fx && window.laxEffects) {
     if (fx.options.length <= 1) window.laxEffects.list().forEach(e => fx.add(new Option(e.label, e.id)));

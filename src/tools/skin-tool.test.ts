@@ -47,6 +47,9 @@ describe("skin tool", () => {
     const refused = await call({ action: "set_background", name: "Beach", path: script });
     expect(refused.isError).toBe(true);
     expect(refused.content).toMatch(/A background can be/);
+    // With a background the app's graphic is hidden until the theme asks for it.
+    expect((await call({ action: "get", name: "Beach" })).content).toMatch(/App graphic .*: hidden/);
+    expect((await call({ action: "save", name: "Beach", graphic: true, apply: false })).content).toMatch(/App graphic .*: shown/);
     expect((await call({ action: "clear_background", name: "Beach" })).content).toMatch(/Background: none/);
   });
 

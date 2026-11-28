@@ -57,6 +57,10 @@ export interface Skin {
   /** Background blur in px, and how far it fades toward the base color (0–0.9). */
   blur: number;
   dim: number;
+  /** Whether the app's own graphic (the agent figure and skyline behind the
+   *  chat) shows with this skin. Unset: it shows unless the skin has a
+   *  background of its own, which would otherwise be drawn under it. */
+  graphic?: boolean;
   effect?: SkinEffect;
   updatedAt: string;
 }
@@ -128,6 +132,7 @@ export function normalizeSkin(raw: unknown, slug: string): Skin | null {
     opacity: num(raw.opacity, 0.15, 1, 0.8),
     blur: num(raw.blur, 0, 40, 0),
     dim: num(raw.dim, 0, 0.9, 0.2),
+    graphic: typeof raw.graphic === "boolean" ? raw.graphic : undefined,
     effect: normalizeEffect(raw.effect),
     updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : new Date(0).toISOString(),
   };

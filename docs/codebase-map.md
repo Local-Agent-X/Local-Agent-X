@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 76 top-level dirs · 76 live · 0 with no live importer · 2231 non-test source files · 57 oversized · 275 nearing the size cap.
+**Totals:** 76 top-level dirs · 76 live · 0 with no live importer · 2231 non-test source files · 56 oversized · 276 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -57,7 +57,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/cognition/` | 17 | 34 | XL |  |
 | `src/persistence/` | 17 | 3 | M |  |
 | `src/self-edit/` | 16 | 19 | L | 2 |
-| `src/anthropic-client/` | 15 | 23 | L | 2 |
+| `src/anthropic-client/` | 15 | 23 | L | 1 |
 | `src/cron/` | 14 | 14 | L |  |
 | `src/routes/` | 14 | 119 | XL | 14 |
 | `src/sync/` | 14 | 27 | L |  |
@@ -254,7 +254,6 @@ Burn-down targets: find the job that grew and move it to a module named after it
 - `src/agent-request/resolve-provider.ts#resolveProvider`
 - `src/agent-store/template-defaults.ts#builtInTemplateDefaults`
 - `src/anthropic-client/stream-api.ts#streamViaAPI`
-- `src/anthropic-client/stream-cli/stream-parse.ts#processStreamLine`
 - `src/app-renderer/client-script.ts#renderClientScript`
 - `src/auto-build/kickoff.ts#createBuildPlanKickoff:returned`
 - `src/autopilot/loop.ts#runAutopilotLoop`
@@ -467,6 +466,7 @@ job. Comments are free: never cut them to fit.
 - `src/agent-request/attachments.ts#processAttachments` — 70+ own code lines (cap 100)
 - `src/agents/escalation-core.ts#performEscalation` — 70+ own code lines (cap 100)
 - `src/anthropic-client/stream-cli/prompt-builder.ts#buildCliPrompt` — 70+ own code lines (cap 100)
+- `src/anthropic-client/stream-cli/stream-parse.ts#processStreamLine` — 70+ own code lines (cap 100)
 - `src/anthropic-client/warm-pool/stream-prompt.ts#processFrame` — 70+ own code lines (cap 100)
 - `src/anthropic-client/warm-pool/stream-prompt.ts#streamViaWarmPool` — 70+ own code lines (cap 100)
 - `src/ari-kernel/evaluate.ts#ariEvaluate` — 70+ own code lines (cap 100)

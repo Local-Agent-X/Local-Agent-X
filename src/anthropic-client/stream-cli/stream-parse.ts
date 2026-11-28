@@ -162,63 +162,73 @@ export function* processStreamLine(
     return;
   }
 
-  if (ev.type === "result") {
-    // An errored `result` frame (is_error) carries a FAILURE message in
-    // `result`, not model output — e.g. the CLI emits "Invalid API key ·
-    // Please run /login" when logged out, or an execution/max-turns error.
-    // Yielding it as `text` lets that error string masquerade as a real
-    // assistant reply (it was being accepted as an LLM "summary" and
-    // persisted OVER real history during compaction — irreversible loss).
-    // Surface a structured `error` event so every caller can fall back or
-    // show an error instead of swallowing the message as content.
-    if (ev.is_error === true) {
-      const errText =
-        typeof ev.result === "string" && ev.result.trim()
-          ? ev.result.trim()
-          : `Claude CLI reported an error result${typeof ev.subtype === "string" ? ` (${ev.subtype})` : ""}`;
-      logger.warn(`[claude] error result frame: ${errText.slice(0, 200)}`);
-      yield { type: "error", error: errText };
-      return;
-    }
-    const result = typeof ev.result === "string" ? ev.result : "";
-    if (result.length > state.prevText.length) {
-      state.fullText = result;
-      const remaining = result.slice(state.prevText.length);
-      const clean = stripToolCallBlocks(remaining, validToolNames);
-      // Don't trim — preserves whitespace at chunk boundaries (was eating leading spaces between sentences)
-      if (clean) yield { type: "text", delta: clean };
-      state.prevText = result;
-    }
-    state.usage = (ev.usage as Record<string, number>) || {};
-    // The terminal `result` frame restates the turn's stop_reason at top
-    // level — authoritative even if the message_delta frame was missed.
-    if (typeof ev.stop_reason === "string") state.stopReason = ev.stop_reason;
-    logger.info(`[claude] Done: ${result.slice(0, 100).replace(/\n/g, "\\n")}...`);
+  if (ev.type === "result") yield* resultFrameEvents(ev, state, validToolNames);
+}
 
-    // Parse tool calls from full response ONLY if we didn't already emit
-    // native tool_use blocks from the assistant event — prevents duplicate
-    // emission when Opus uses native tool_use (which my text parser would
-    // also match against the textual representation).
-    //
-    // Text calls go through the canonical extractor, the one parser every
-    // adapter's text rescue uses: offered tool names only, and a truncated
-    // payload never dispatches.
-    if (!state.emittedNativeTools) {
-      const toolCalls = extractToolCallsFromText(state.fullText, validToolNames).toolCalls;
-      for (const tc of toolCalls) {
-        const redactedArgs = tc.arguments.slice(0, 100).replace(/(?:password|secret|token|key|api_key|apiKey|authorization|bearer)["']?\s*[:=]\s*["']?[^"',}\s]{3}[^"',}]*/gi, (m) => m.slice(0, m.indexOf(":") + 4) + "***REDACTED***");
-        logger.info(`[claude] Tool call: ${tc.name}(${redactedArgs})`);
-        yield { type: "tool_call", id: newToolCallId(tc.name), name: tc.name, arguments: tc.arguments };
-      }
-      // Diagnostic: if response CONTAINS "tool_calls" text but parser found
-      // nothing, log it — helps catch future CLI output-format changes.
-      if (toolCalls.length === 0 && /"tool_calls"/.test(state.fullText)) {
-        logger.warn(`[claude] WARNING: response contains "tool_calls" but parser extracted 0 calls. Response head: ${state.fullText.slice(0, 300).replace(/\n/g, "\\n")}`);
-      }
-    }
-    yield buildDoneEvent(state);
+/**
+ * The CLI's closing `result` frame: the rest of the text, the calls the
+ * model wrote as text, then `done`. An errored frame is an error event and
+ * nothing else.
+ */
+function* resultFrameEvents(
+  ev: Record<string, unknown>,
+  state: CliStreamState,
+  validToolNames: Set<string>,
+): Generator<StreamEvent> {
+  // An errored `result` frame (is_error) carries a FAILURE message in
+  // `result`, not model output — e.g. the CLI emits "Invalid API key ·
+  // Please run /login" when logged out, or an execution/max-turns error.
+  // Yielding it as `text` lets that error string masquerade as a real
+  // assistant reply (it was being accepted as an LLM "summary" and
+  // persisted OVER real history during compaction — irreversible loss).
+  // Surface a structured `error` event so every caller can fall back or
+  // show an error instead of swallowing the message as content.
+  if (ev.is_error === true) {
+    const errText =
+      typeof ev.result === "string" && ev.result.trim()
+        ? ev.result.trim()
+        : `Claude CLI reported an error result${typeof ev.subtype === "string" ? ` (${ev.subtype})` : ""}`;
+    logger.warn(`[claude] error result frame: ${errText.slice(0, 200)}`);
+    yield { type: "error", error: errText };
     return;
   }
+  const result = typeof ev.result === "string" ? ev.result : "";
+  if (result.length > state.prevText.length) {
+    state.fullText = result;
+    const remaining = result.slice(state.prevText.length);
+    const clean = stripToolCallBlocks(remaining, validToolNames);
+    // Don't trim — preserves whitespace at chunk boundaries (was eating leading spaces between sentences)
+    if (clean) yield { type: "text", delta: clean };
+    state.prevText = result;
+  }
+  state.usage = (ev.usage as Record<string, number>) || {};
+  // The terminal `result` frame restates the turn's stop_reason at top
+  // level — authoritative even if the message_delta frame was missed.
+  if (typeof ev.stop_reason === "string") state.stopReason = ev.stop_reason;
+  logger.info(`[claude] Done: ${result.slice(0, 100).replace(/\n/g, "\\n")}...`);
+
+  // Parse tool calls from full response ONLY if we didn't already emit
+  // native tool_use blocks from the assistant event — prevents duplicate
+  // emission when Opus uses native tool_use (which my text parser would
+  // also match against the textual representation).
+  //
+  // Text calls go through the canonical extractor, the one parser every
+  // adapter's text rescue uses: offered tool names only, and a truncated
+  // payload never dispatches.
+  if (!state.emittedNativeTools) {
+    const toolCalls = extractToolCallsFromText(state.fullText, validToolNames).toolCalls;
+    for (const tc of toolCalls) {
+      const redactedArgs = tc.arguments.slice(0, 100).replace(/(?:password|secret|token|key|api_key|apiKey|authorization|bearer)["']?\s*[:=]\s*["']?[^"',}\s]{3}[^"',}]*/gi, (m) => m.slice(0, m.indexOf(":") + 4) + "***REDACTED***");
+      logger.info(`[claude] Tool call: ${tc.name}(${redactedArgs})`);
+      yield { type: "tool_call", id: newToolCallId(tc.name), name: tc.name, arguments: tc.arguments };
+    }
+    // Diagnostic: if response CONTAINS "tool_calls" text but parser found
+    // nothing, log it — helps catch future CLI output-format changes.
+    if (toolCalls.length === 0 && /"tool_calls"/.test(state.fullText)) {
+      logger.warn(`[claude] WARNING: response contains "tool_calls" but parser extracted 0 calls. Response head: ${state.fullText.slice(0, 300).replace(/\n/g, "\\n")}`);
+    }
+  }
+  yield buildDoneEvent(state);
 }
 
 /** Handle the trailing buffer that didn't end with a newline. Only the

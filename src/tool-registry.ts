@@ -209,6 +209,11 @@ export function askedQuestionOf(name: string, args: Record<string, unknown>): As
   return { text: value.trim(), drawnByClient: asks!.drawnByClient === true };
 }
 
+/** Does this tool change only the chat's own step list (its row's `stepListOnly`)? */
+export function changesOnlyStepList(name: string): boolean {
+  return TOOL_POLICIES[name]?.stepListOnly === true;
+}
+
 /** Does a succeeded call of this tool end the turn (its row's `closesTurn`)? */
 export function closesTurn(name: string): boolean {
   return TOOL_POLICIES[name]?.closesTurn === true;

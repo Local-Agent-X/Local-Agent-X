@@ -6,7 +6,7 @@
 
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import { USER_HINTS } from "../types.js";
-import { isPlanMode, isReadOnlyCall } from "../tools/plan-tools.js";
+import { allowedInPlanMode, isPlanMode, isReadOnlyCall } from "../tools/plan-tools.js";
 import { logRetry } from "../retry-telemetry.js";
 import type { Phase, PhaseOutcome, ToolCallContext } from "./context.js";
 import { terminate, CONTINUE, HALT } from "./context.js";
@@ -297,9 +297,9 @@ export const resolvePhase: Phase = async (ctx) => {
 
   await parseArgs(ctx);
 
-  // Plan mode: block non-read-only tools (session-scoped). Collapsed family
-  // tools (spreadsheet/document/pdf) are judged per args.action.
-  if (isPlanMode(sessionId) && !isReadOnlyCall(tc.name, ctx.args)) {
+  // Plan mode: block what is not a read or the step list (session-scoped).
+  // Collapsed family tools (spreadsheet/document/pdf) are judged per args.action.
+  if (isPlanMode(sessionId) && !allowedInPlanMode(tc.name, ctx.args)) {
     const result = blocked("BLOCKED: Plan mode is active. Only read-only tools are allowed.", { layer: "plan-mode", userHint: USER_HINTS.planMode, recovery: "Keep to read-only tools; call exit_plan_mode when you are ready to make changes." });
     return terminate(ctx, { rendered: "model", result, allowed: false });
   }

@@ -352,6 +352,13 @@ interface ToolPolicyRowFacts {
    *  the turn, so the heap guard never does. Absent: refused like any call.
    *  Never a sensitive read or external content (heap-guard.test.ts). */
   runControl?: true;
+  /** The call changes only this chat's own step list (update_plan, the task
+   *  tools): what the user sees under the reply, nothing on disk or outside
+   *  the app. Plan mode lets it through, so the plan can be laid out as steps
+   *  while nothing else may change (tools/plan-tools.ts). Absent: plan mode
+   *  judges the call by isReadOnlyCall. Not read anywhere else: the row's
+   *  `risk` still decides approval, committing and progress. */
+  stepListOnly?: true;
   /** The call puts a question to the user and waits for the answer: the arg
    *  holding it. A succeeded call ends the turn on that question
    *  (turn-loop/ask-user-terminal.ts): the missing input is the user's answer,

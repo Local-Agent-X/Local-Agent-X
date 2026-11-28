@@ -126,3 +126,28 @@ describe("the other row-declared facts the gates read", () => {
     }
   });
 });
+
+describe("plan mode lets the step list through, and nothing else that writes", () => {
+  it("update_plan and the task tools are allowed, though they are not reads", async () => {
+    const { allowedInPlanMode } = await import("./plan-tools.js");
+    for (const name of ["update_plan", "task_create", "task_update"]) {
+      expect(isReadOnlyCall(name, {}), name).toBe(false);
+      expect(allowedInPlanMode(name, {}), name).toBe(true);
+    }
+    for (const name of ["write", "edit", "bash", "email_send", "wrap_up", "no_such_tool"]) {
+      expect(allowedInPlanMode(name, {}), name).toBe(false);
+    }
+  });
+
+  it("only a row that touches nothing outside the app may say it changes just the step list", () => {
+    const marked = Object.entries(TOOL_POLICIES).filter(([, row]) => (row as ToolPolicyRow).stepListOnly);
+    expect(marked.map(([name]) => name).sort()).toEqual(["task_create", "task_update", "update_plan"]);
+    for (const [name, row] of marked) {
+      const r = row as ToolPolicyRow;
+      expect(r.kernel, name).toBe("internal");
+      expect(r.capabilities, name).toEqual([]);
+      expect(r.pathArgs, name).toBeUndefined();
+      expect(r.destination, name).toBeUndefined();
+    }
+  });
+});

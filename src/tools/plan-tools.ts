@@ -1,6 +1,7 @@
 import type { ServerEvent, ToolDefinition, ToolResult } from '../types.js';
 import { isEnforcedPlanMode, setEnforcedPlanMode } from '../canonical-loop/public/plan-ledger.js';
 import { getApprovalManager } from '../approval-manager.js';
+import { changesOnlyStepList, isReadOnlyCall } from '../tool-registry.js';
 import { onEventOf, sessionIdOf, toolCallIdOf } from "../tool-execution/internal-args.js";
 
 // Session-scoped plan mode — each session tracks its own state. This set is
@@ -27,6 +28,13 @@ export function clearSoftPlanMode(sessionId: string): void {
 // because its row's risk is safe (it delivers a question and ends the turn —
 // plan mode is exactly when a clarifying question is most useful).
 export { isReadOnlyCall } from '../tool-registry.js';
+
+// Besides those reads, the step list: laying a plan out as steps is planning,
+// and refusing it cost a round in the first turn of a plan (glasses chat,
+// 2026-11-27). Its row says so (`stepListOnly`); nothing else changes.
+export function allowedInPlanMode(name: string, args: Record<string, unknown>): boolean {
+  return isReadOnlyCall(name, args) || changesOnlyStepList(name);
+}
 
 const enterPlanMode: ToolDefinition = {
   name: 'enter_plan_mode',

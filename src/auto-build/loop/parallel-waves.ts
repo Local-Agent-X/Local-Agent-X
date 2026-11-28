@@ -75,6 +75,7 @@ import { pickUpSetAsideWork } from "./carry-over.js";
 import { isSetAsideCase, setChunkAsideInTree, stoppedMidChunk } from "./tree-set-aside.js";
 import type { EmitFn, LoopEvent, LoopOptions, LoopResult } from "./types.js";
 import { haltedResult, safeGet } from "./types.js";
+import { stopForLead } from "./lead-batch.js";
 import { modelAccountStop } from "./model-account.js";
 
 export interface ParallelWavesContext {
@@ -191,6 +192,8 @@ export async function runParallelWaves(input: ParallelWavesContext): Promise<Loo
       // A stop that cut the batch short ends the run stopped, never "complete":
       // its chunks are kept to go on from (keepStoppedChunk), not on the ledger.
       if (opts.signal?.aborted) return haltedResult("loop aborted by signal", buildable[buildable.length - 1].number, outcomes, events);
+      // A lead driving the build reads the batch here, before more is started (lead-batch.ts).
+      await stopForLead(opts, buildable, totalChunks, outcomes, ctx.landedThisRun);
       const at = { chunkNumber: buildable[buildable.length - 1].number, totalChunks, lead: opts.buildLead, signal: opts.signal, emit };
       if (await stopForSetAside(ctx.ledger, at)) return endRunWithSetAside(ctx, chunksCommitted);
     }

@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 75 top-level dirs · 75 live · 0 with no live importer · 2220 non-test source files · 58 oversized · 276 nearing the size cap.
+**Totals:** 75 top-level dirs · 75 live · 0 with no live importer · 2221 non-test source files · 58 oversized · 277 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -65,7 +65,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/sync/` | 13 | 27 | L |  |
 | `src/app-scaffold/` | 12 | 7 | M |  |
 | `src/ari-kernel/` | 12 | 12 | M |  |
-| `src/auto-build/` | 12 | 91 | XL | 1 |
+| `src/auto-build/` | 12 | 92 | XL | 1 |
 | `src/integrations/` | 12 | 15 | M |  |
 | `src/whatsapp-bridge/` | 11 | 8 | M | 1 |
 | `src/agent-guards/` | 10 | 13 | L |  |
@@ -532,6 +532,7 @@ job. Comments are free: never cut them to fit.
 - `src/auto-build/loop/handle-push-back.ts#handlePushBack` — 60+ own code lines (cap 100)
 - `src/auto-build/loop/lead-rounds.ts#planLeadRound` — 60+ own code lines (cap 100)
 - `src/auto-build/loop/merged-regate.ts#reGateMergedTree` — 60+ own code lines (cap 100)
+- `src/auto-build/loop/parallel-waves.ts#runParallelWaves` — 60+ own code lines (cap 100)
 - `src/auto-build/loop/run.ts#runBuildLoop` — 60+ own code lines (cap 100)
 - `src/auto-build/orchestrator/resume.ts#computeResumeWindow` — 60+ own code lines (cap 100)
 - `src/autopilot/round-agent.ts#runAutopilotRound` — 60+ own code lines (cap 100)

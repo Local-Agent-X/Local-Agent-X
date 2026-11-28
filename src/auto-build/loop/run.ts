@@ -44,6 +44,7 @@ import { createWallProbe } from "./wall-probe.js";
 import { runFinishGates } from "../finish-gates/run.js";
 import { runParallelWaves } from "./parallel-waves.js";
 import { buildSplitOffs } from "./split-chunks.js";
+import { stopForLead } from "./lead-batch.js";
 
 /**
  * Resolve the effective parallel-chunk concurrency. An explicit
@@ -298,6 +299,8 @@ async function runChunksInOrder(run: {
     if (phase.kind === "halt") return phase.result;
     const probe = await wallProbe.afterLanding({ opts, totalChunks, emit, events, outcomes }, chunk.number, chunksCommitted);
     if (probe.kind === "halt") return probe.result;
+    // A lead driving the build reads the chunk here, before the next is started (lead-batch.ts).
+    await stopForLead(opts, [chunk], totalChunks, outcomes, landedThisRun);
   }
 
   if (anythingSetAside(ledger)) return endSetAside();

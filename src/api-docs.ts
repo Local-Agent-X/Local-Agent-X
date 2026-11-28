@@ -142,43 +142,16 @@ export const builtinRoutes: ApiRoute[] = [
     },
   },
 
-  // Voice
+  // Voice. Speech back to the user has no HTTP route: it rides /ws/voice.
   {
     method: "post",
-    path: "/api/voice/tts",
-    description: "Convert text to speech audio",
+    path: "/api/voice/dictate-once",
+    description: "Transcribe one recording. The body is the raw audio, any format ffmpeg reads, up to 25 MB; an empty text means no speech was heard",
     tags: ["voice"],
     requestBody: {
       required: true,
       content: {
-        "application/json": {
-          schema: {
-            type: "object",
-            properties: {
-              text: { type: "string" },
-              voice: { type: "string" },
-            },
-            required: ["text"],
-          },
-        },
-      },
-    },
-    responses: {
-      "200": {
-        description: "Audio data",
-        content: { "audio/wav": { schema: { type: "string", format: "binary" } } },
-      },
-    },
-  },
-  {
-    method: "post",
-    path: "/api/voice/stt",
-    description: "Convert speech audio to text",
-    tags: ["voice"],
-    requestBody: {
-      required: true,
-      content: {
-        "audio/wav": { schema: { type: "string", format: "binary" } },
+        "application/octet-stream": { schema: { type: "string", format: "binary" } },
       },
     },
     responses: {
@@ -190,6 +163,7 @@ export const builtinRoutes: ApiRoute[] = [
           },
         },
       },
+      "503": { description: "ffmpeg is not installed" },
     },
   },
 

@@ -23,6 +23,7 @@ export const currentDocs = [
   "docs/CREDITS.md",
   "docs/agent-capabilities.md",
   "docs/app-chat-security.md",
+  "docs/clients-and-devices.md",
   "docs/ari-kernel.md",
   "docs/benchmarks/README.md",
   "docs/benchmarks/ari-security.md",

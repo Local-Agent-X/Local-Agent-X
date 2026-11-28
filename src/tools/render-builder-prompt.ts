@@ -29,7 +29,8 @@ const APP_CHAT_RULE =
 export const APP_CHAT_TOOL_HINT =
   "An app that needs an assistant inside it (a chat panel, several named agents) talks to the user's agents through window.lax.chat('<thread>', message, { persona }), " +
   "which LAX injects into every app page: one thread per agent, and the user approves each app once in their inbox (until then a call rejects with code 'needs_approval'). " +
-  "Never /api/chat, a proxy, a file-polling bridge or self_edit for this; tell the user that approving lets the app run turns with their full powers (docs/app-chat-security.md).";
+  "Never /api/chat, a proxy, a file-polling bridge or self_edit for this; tell the user that approving lets the app run turns with their full powers (docs/app-chat-security.md). " +
+  "A program or device outside an app page (a simulator, a script, hardware): read docs/clients-and-devices.md, not the server source.";
 
 export function looksLikeWebsiteRequest(prompt: string): boolean {
   return WEBSITE_NOUN_IN_PROMPT_RE.test(prompt);

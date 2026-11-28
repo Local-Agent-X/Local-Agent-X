@@ -78,6 +78,10 @@ function shellPathQuotingLines(appDir: string): string[] {
   ];
 }
 
+/** Where a full-stack app keeps its code: the backend, the served page's own
+ *  scripts, and a scaffolded frontend. The structure check measures these. */
+export const FULL_STACK_SOURCE_ROOTS = ["server", "src", "client/src"] as const;
+
 export function fullStackRuleLines(appName: string, appDir: string): string[] {
   return [
     "",
@@ -90,6 +94,7 @@ export function fullStackRuleLines(appName: string, appDir: string): string[] {
     `- index.html (the served frontend) reaches the backend through that connector, NOT a direct localhost fetch — a direct http://localhost fetch breaks the moment the app is opened from the phone, where "localhost" is the phone and not this machine. Fetch the same-origin proxy /api/connectors/dev-${appName}/<path> with header Authorization: 'Bearer ' + window.__LAX_CONNECTOR_TOKEN__.`,
     `- After you EDIT backend source (anything under ${appDir}/server), the running dev server keeps the OLD code until it restarts. Re-run the SAME app_serve_backend({ app_id: "${appName}", command, port }) call — it does a clean restart so your changes take effect. Don't tell the user the backend is fixed without restarting it.`,
     `- FRONTEND WITH A BUILD STEP (Vite / Next / a React/Vue/Svelte SPA with HMR), not a single static index.html? Scaffold it with the framework's OFFICIAL creator (Vite: \`npm create vite@latest client -- --template react-ts\`; Next: \`npx create-next-app@latest client --ts --app --no-tailwind --skip-install --yes\`) — never hand-write the skeleton. Use EXACTLY ONE framework (a Next app must not carry a vite.config, and vice-versa — two frameworks leave one config dead and the page blank), then set the base path so assets resolve under /apps/${appName}/ — Vite: \`base: '/apps/${appName}/', server: { port: <P>, host: true, hmr: { clientPort: <P>, host: 'localhost' } }\`; Next: \`basePath: '/apps/${appName}', assetPrefix: '/apps/${appName}'\` in next.config (no vite.config, Next owns its own HMR). Start it with app_serve_frontend({ app_id: "${appName}", command: "npm install && npm run dev", port: <P> }). LAX reverse-proxies /apps/${appName}/ to it — so the app URL serves the live dev server. Hot-reload works on desktop; the phone shows the result on reload. Without the base config, assets and hot-reload 404. (A plain static frontend does NOT need this — just write index.html.)`,
+    `- WHERE CODE GOES: the backend under ${appDir}/server, and any script the served index.html loads under ${appDir}/src (e.g. src/app.js), not loose at the app root. The structure check measures ${FULL_STACK_SOURCE_ROOTS.join("/, ")}/ and nothing else, so code anywhere else is unchecked.`,
     "- The backend is real and persistent — never hardcode sample rows in the frontend to simulate it. Show an honest empty/error state until the real API returns.",
   ];
 }

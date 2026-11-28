@@ -17,7 +17,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
-  KIT_SCRIPTS, KIT_SEAL_TEST, KIT_SEAL_TEST_PY, STRUCTURE_CHECK_COMMAND, STRUCTURE_CHECK_SCRIPT, ownTypeScriptDir, readKitFile,
+  KIT_SCRIPTS, KIT_SEAL_TEST, KIT_SEAL_TEST_PY, STRUCTURE_CHECK_COMMAND, STRUCTURE_CHECK_SCRIPT, STRUCTURE_ROOTS_MANIFEST, ownTypeScriptDir, readKitFile,
 } from "./kit-files.js";
 import { recordCreatorDocs } from "./creator-docs.js";
 import { KIT_SIZE_CAPS } from "./kit-size.js";
@@ -31,8 +31,13 @@ export { structureWarningNote } from "./structure-check-output.js";
 
 export interface ProjectKitOptions {
   projectName: string;
-  /** Overrides the root the project kind implies (project-kind.ts). */
+  /** Names this root in the docs instead of the one the project kind implies
+   *  (project-kind.ts). The check still scans the kind's roots. */
   sourceRoot?: string;
+  /** Where this project keeps its code when that is not where its kind would
+   *  put it (a full-stack app's `server/`): named in the docs AND recorded for
+   *  the check (STRUCTURE_ROOTS_MANIFEST), so the bare command measures them. */
+  sourceRoots?: string[];
   /** See KitDocOptions.readFirst. */
   readFirst?: string[];
   /** See KitDocOptions.environmentNotes. */
@@ -78,7 +83,7 @@ export function projectKitFiles(
   now: Date = new Date(),
 ): KitFile[] {
   const kind = detectProjectKind(projectDir);
-  const sourceRoots = opts.sourceRoot ? [opts.sourceRoot] : kind.sourceRoots;
+  const sourceRoots = opts.sourceRoots?.length ? opts.sourceRoots : opts.sourceRoot ? [opts.sourceRoot] : kind.sourceRoots;
   const docs: KitDocOptions = {
     projectName: opts.projectName,
     sourceRoots,
@@ -98,6 +103,9 @@ export function projectKitFiles(
     { rel: "docs/history/README.md", content: renderHistoryReadme() },
     ...KIT_SCRIPTS.map((name) => ({ rel: `scripts/${name}`, content: readKitFile(name) })),
   ];
+  if (opts.sourceRoots?.length) {
+    files.push({ rel: STRUCTURE_ROOTS_MANIFEST, content: JSON.stringify({ roots: opts.sourceRoots }, null, 2) + "\n" });
+  }
   // The seal test needs a runner; without one it would be a file nothing runs.
   // Rust and Go ship none: the compiler enforces the boundary.
   if (kind.sealTest === "vitest") {

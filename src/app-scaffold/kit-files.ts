@@ -20,6 +20,10 @@ export const STRUCTURE_CHECK_COMMAND = `node ${STRUCTURE_CHECK_SCRIPT}`;
  *  check reads it beside itself (kit/check-doc-paths.mjs header). */
 export const STOCK_DOCS_MANIFEST = "scripts/doc-paths-stock.json";
 
+/** The source roots a project recorded for its own check, read by the check
+ *  beside itself when no --root is given (kit/check-structure.mjs header). */
+export const STRUCTURE_ROOTS_MANIFEST = "scripts/structure-roots.json";
+
 /** The scripts every kit project gets, by their name under its scripts/: every
  *  script the sync vendors. The one list is scripts/check-kit-sync.mjs KIT_FILES;
  *  the sync records it in kit/UPSTREAM.json, read here. */

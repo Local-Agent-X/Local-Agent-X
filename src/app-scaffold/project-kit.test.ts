@@ -229,6 +229,35 @@ describe("the kit follows the project kind", () => {
     expect(failing.status).toBe(1);
     expect(failing.out).toContain("app/components/");
   });
+
+  // A full-stack app has no project file at its root and keeps its backend in
+  // server/. Scanning the kind's default (src/) measured no file at all.
+  it("recorded roots: the bare check measures code where this project keeps it", () => {
+    const code = (n: number) => Array.from({ length: n }, (_, i) => `const v${i} = ${i};`).join("\n") + "\n";
+    file("server/server.js", code(401));
+    const result = applyProjectKit(dir, { projectName: "Habits", sourceRoots: ["server", "src", "client/src"] });
+    expect(result.written).toContain("scripts/structure-roots.json");
+    expect(JSON.parse(read("scripts/structure-roots.json"))).toEqual({ roots: ["server", "src", "client/src"] });
+    expect(read("AGENTS.md")).toContain("`server/`");
+
+    const over = check(dir);
+    expect(over.status).toBe(1);
+    expect(over.out).toContain("server/server.js: 401 code lines (cap 400)");
+
+    file("server/server.js", code(20));
+    file("src/app.js", code(401));
+    const page = check(dir);
+    expect(page.status).toBe(1);
+    expect(page.out).toContain("src/app.js: 401 code lines (cap 400)");
+
+    file("src/app.js", code(20));
+    expect(check(dir).status).toBe(0);
+  });
+
+  it("without recorded roots the check keeps the project kind's rule", () => {
+    applyProjectKit(dir, { projectName: "App" });
+    expect(existsSync(join(dir, "scripts/structure-roots.json"))).toBe(false);
+  });
 });
 
 describe("adoptProjectKit — the kit for a project the model created", () => {

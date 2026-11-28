@@ -362,6 +362,24 @@ describe("build_app — the chat builds the app itself", () => {
     }
   });
 
+  it("a full-stack app's check is pointed at where the brief puts its code", async () => {
+    const appName = `routing-fullstack-${Date.now()}`;
+    const appDir = workspacePath("apps", appName);
+    try {
+      const r = await buildAppTool.execute({
+        name: appName,
+        prompt: "A habit tracker with a real backend API server that saves habits to a database file.",
+        _sessionId: "test-session-routing",
+      });
+      expect(r.isError).toBeFalsy();
+      expect(readAppBuildBrief(appDir)).toMatchObject({ tier: "full-stack" });
+      expect(JSON.parse(readFileSync(join(appDir, "scripts/structure-roots.json"), "utf-8"))).toEqual({ roots: ["server", "src", "client/src"] });
+      expect(String(r.content)).toContain("The structure check measures server/, src/, client/src/ and nothing else");
+    } finally {
+      try { rmSync(appDir, { recursive: true, force: true }); } catch { /* swallow */ }
+    }
+  });
+
   it("an update keeps the app's files and is recorded as one", async () => {
     const appName = `routing-update-${Date.now()}`;
     const appDir = workspacePath("apps", appName);

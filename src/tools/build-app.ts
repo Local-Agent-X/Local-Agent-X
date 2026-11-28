@@ -29,7 +29,7 @@ import { getSetting } from "../settings.js";
 import { workspacePath } from "../config.js";
 import type { ToolDefinition } from "../types.js";
 import { PROVIDERS } from "../providers/registry.js";
-import { APP_CHAT_TOOL_HINT, renderPerBuildContext, listAssetsDir } from "./render-builder-prompt.js";
+import { APP_CHAT_TOOL_HINT, FULL_STACK_SOURCE_ROOTS, renderPerBuildContext, listAssetsDir } from "./render-builder-prompt.js";
 import { AgentTemplateStore, type AgentExecStrategy } from "../agent-store/index.js";
 import { appEnvironmentNotes, seedAppTemplate } from "./app-tools/app-template.js";
 import { applyProjectKit } from "../app-scaffold/project-kit.js";
@@ -245,7 +245,9 @@ export const buildAppTool: ToolDefinition = {
     // in before the starter so a full-stack app's AGENTS.md is the kit's, with
     // the served page's CSP notes as its Environment section.
     if (!isUpdate && (tier === "full-stack" || tier === "compiled-native")) {
-      applyProjectKit(appDir, { projectName: appName, environmentNotes: tier === "full-stack" ? appEnvironmentNotes() : undefined });
+      applyProjectKit(appDir, tier === "full-stack"
+        ? { projectName: appName, environmentNotes: appEnvironmentNotes(), sourceRoots: [...FULL_STACK_SOURCE_ROOTS] }
+        : { projectName: appName });
     }
     if (!isUpdate && !realBuildTier) seedAppTemplate(appDir, appName);
 

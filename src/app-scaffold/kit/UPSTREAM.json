@@ -45,7 +45,7 @@
   },
   "check-structure.mjs": {
     "upstream": "scripts/check-structure.mjs",
-    "sha256": "e087e7c221a109a25218f197be576c4704b4fd24a2337323b5c718829ff61d35"
+    "sha256": "0b2ae83862c3fb706df06ac5e2655a4af6cfcf4ad6afbe4504217d3f8ccf7c2c"
   },
   "check-canonical.mjs": {
     "upstream": "scripts/check-canonical.mjs",

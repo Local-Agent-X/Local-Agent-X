@@ -15,7 +15,10 @@
  * Without --check the map is REGENERATED (the build keeps it current, and the
  * commit carries it); with --check a stale map fails instead, which is what CI
  * wants. The map runs first so the doc-path check reads the map of this tree,
- * not the last one. Without --root the source roots come from the project kind
+ * not the last one. Without --root the source roots are the ones the project
+ * recorded (structure-roots.json beside this script, `{ "roots": ["server",
+ * "src"] }`: for a project whose code is not where its kind would put it, so
+ * the bare command still measures it), else they come from the project kind
  * (project-languages.mjs: Cargo.toml → src; go.mod → internal/, cmd/, pkg/;
  * package.json → src or the framework's layout; otherwise src), and every
  * check is handed the same roots, and the map and the size check the same caps.
@@ -25,6 +28,7 @@
  * the tail of the output (a harness gate) still sees what to fix.
  */
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { defaultRoots } from "./project-languages.mjs";
 import { limitArgs, limitsFromArgs } from "./code-size.mjs";
@@ -38,7 +42,18 @@ const opt = (name) => {
 	return i >= 0 ? [name, args[i + 1]] : [];
 };
 const given = args.flatMap((a, i) => (a === "--root" ? [args[i + 1]] : []));
-const roots = (given.length ? given : defaultRoots(process.cwd())).flatMap((r) => ["--root", r]);
+/** The roots the project recorded for itself, or none: no record, an unreadable
+ *  one, or an empty list all fall back to the project kind's rule. */
+function recordedRoots() {
+	try {
+		const roots = JSON.parse(readFileSync(new URL("./structure-roots.json", import.meta.url), "utf8")).roots;
+		return Array.isArray(roots) ? roots.filter((r) => typeof r === "string" && r) : [];
+	} catch {
+		return [];
+	}
+}
+const recorded = given.length ? [] : recordedRoots();
+const roots = (given.length ? given : recorded.length ? recorded : defaultRoots(process.cwd())).flatMap((r) => ["--root", r]);
 const limits = limitArgs(limitsFromArgs(args));
 const check = args.includes("--check");
 const canonical = args.flatMap((a, i) => (a === "--canonical" ? ["--canonical", args[i + 1]] : []));

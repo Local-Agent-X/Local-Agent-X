@@ -1405,11 +1405,19 @@
           <div class="appearance-row" style="margin-top:22px;margin-bottom:0">
             <div>
               <div class="section-title">Animated background</div>
-              <div class="section-desc">Rain the agent's covert-ops phrases in the current accent color. Off by default.</div>
+              <div class="section-desc">A moving layer behind the app, in the current colors. A theme of your own can carry its own, which plays instead.</div>
             </div>
-            <div class="toggle" id="tog-rain" onclick="toggleRain(this)" role="switch" aria-label="Animated phrase-rain background"></div>
+            <select id="fx-select" class="field-select" style="width:auto;min-width:150px" aria-label="Animated background" onchange="laxEffects.choose(this.value)"><option value="">Off</option></select>
           </div>
         </div>
+        <!-- My themes: the user's own skins (settings-skins.js, src/skins/) -->
+        <div class="section-card">
+          <div class="section-title">My themes</div>
+          <div class="section-desc">Your own look for the chat window and sidebars: a background picture or video, your colors, see-through panels and a moving layer. Make one here, or ask the agent ("give me a Christmas theme with falling snow"). Themes are kept with your data, so updates never change them.</div>
+          <div class="theme-grid" id="skin-list"></div>
+          <div class="btn-row" style="margin-top:12px"><button type="button" class="action-btn primary" id="skin-new">New theme</button><span id="skin-status" class="field-hint" aria-live="polite"></span></div>
+        </div>
+        <div class="section-card" id="skin-editor" style="display:none"></div>
       </div>
 
       <!-- Secrets (moved from standalone page) -->
@@ -1839,7 +1847,12 @@
 <script src="/js/perf-longtask.js?v=v1"></script>
 <script src="/js/spring.js"></script>
 <script src="/js/shared.js?v=v2"></script>
-<script src="/js/shared-theme.js?v=v2"></script>
+<script src="/js/shared-theme.js?v=v3"></script>
+<script src="/js/skin-effects.js?v=v1"></script>
+<script src="/js/skin-effects-builtin.js?v=v1"></script>
+<script src="/js/phrase-rain.js?v=v2"></script>
+<script src="/js/skin-effect-frame.js?v=v1"></script>
+<script src="/js/skin.js?v=v1"></script>
 <script src="/js/shared-desktop.js?v=v1"></script>
 <script src="/js/shared-escape.js?v=v1"></script>
 <script src="/js/shared-md.js?v=v5"></script>
@@ -1984,7 +1997,6 @@
 <script src="/js/chat-send-now.js?v=v1"></script>
 <script src="/js/chat-render-artifacts.js?v=v16"></script>
 <script src="/js/thinking-phrases.js?v=v2"></script>
-<script src="/js/phrase-rain.js?v=v1"></script>
 <script src="/js/chat-render-window.js?v=v1"></script>
 <script src="/js/chat-app-message.js?v=v4"></script>
 <script src="/js/chat-render.js?v=v13"></script>
@@ -2030,6 +2042,7 @@
 <script src="/js/settings-watching.js?v=v1"></script>
 <script src="/js/settings-calendars.js?v=v1"></script>
 <script src="/js/settings-brands.js?v=v2"></script>
+<script src="/js/settings-skins.js?v=v1"></script>
 <script src="/js/settings-learned-workflows.js?v=v1"></script>
 <script src="/js/settings-recurring-problems.js?v=v1"></script>
 <script src="/js/settings-memory-changes.js?v=v1"></script>
@@ -2041,7 +2054,7 @@
 <script src="/js/settings-uploads.js?v=v1"></script>
 <script src="/js/settings-voice-engines.js?v=v1"></script>
 <script src="/js/settings-hq.js?v=v1"></script>
-<script src="/js/settings.js?v=vc4"></script>
+<script src="/js/settings.js?v=vc6"></script>
 <script src="/js/voice-picker-catalog.js?v=v3"></script>
 <!-- voice-picker split: core defines the `let` cache vars + _esc that
      the other two read from shared script scope, so it must load first. -->

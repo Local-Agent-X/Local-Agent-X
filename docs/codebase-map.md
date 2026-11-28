@@ -13,17 +13,17 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 75 top-level dirs · 75 live · 0 with no live importer · 2225 non-test source files · 57 oversized · 276 nearing the size cap.
+**Totals:** 76 top-level dirs · 76 live · 0 with no live importer · 2229 non-test source files · 57 oversized · 276 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | Oversized |
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 198 | 32 | XL | 1 |
-| `src/security/` | 176 | 68 | XL | 2 |
-| `src/tools/` | 153 | 272 | XL | 5 |
+| `src/security/` | 178 | 68 | XL | 2 |
+| `src/tools/` | 154 | 273 | XL | 5 |
 | `src/tool-execution/` | 115 | 92 | XL | 2 |
-| `src/workspace/` | 102 | 4 | M |  |
+| `src/workspace/` | 103 | 4 | M |  |
 | `src/canonical-loop/` | 100 | 306 | XL | 6 |
 | `src/util/` | 88 | 5 | S |  |
 | `src/providers/` | 80 | 28 | L | 1 |
@@ -32,7 +32,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/data-lineage/` | 64 | 12 | L |  |
 | `src/agency/` | 56 | 41 | XL |  |
 | `src/browser/` | 55 | 95 | XL | 5 |
-| `src/chat-ws/` | 53 | 25 | L |  |
+| `src/chat-ws/` | 54 | 25 | L |  |
 | `src/tool-policy/` | 48 | 22 | L |  |
 | `src/local-runtimes/` | 45 | 28 | XL |  |
 | `src/threat/` | 43 | 13 | L |  |
@@ -59,10 +59,10 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/self-edit/` | 16 | 19 | L | 2 |
 | `src/anthropic-client/` | 15 | 23 | L | 2 |
 | `src/cron/` | 14 | 14 | L |  |
-| `src/routes/` | 14 | 118 | XL | 14 |
+| `src/routes/` | 14 | 119 | XL | 14 |
+| `src/sync/` | 14 | 27 | L |  |
 | `src/agent-loop/` | 13 | 1 | S |  |
 | `src/app-renderer/` | 13 | 7 | M | 1 |
-| `src/sync/` | 13 | 27 | L |  |
 | `src/app-scaffold/` | 12 | 7 | M |  |
 | `src/ari-kernel/` | 12 | 12 | M |  |
 | `src/auto-build/` | 12 | 92 | XL | 1 |
@@ -92,6 +92,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/conversation/` | 2 | 3 | M |  |
 | `src/llm-dispatch/` | 2 | 3 | M |  |
 | `src/manifest-generator/` | 2 | 8 | M |  |
+| `src/skins/` | 2 | 2 | S |  |
 | `src/pricing/` | 1 | 1 | S |  |
 | `src/usage-report/` | 1 | 3 | S |  |
 

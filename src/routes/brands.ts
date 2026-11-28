@@ -27,7 +27,7 @@ import { fetchLogo, readSiteBrand } from "../tools/site-brand.js";
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
 
 /** A file /api/upload stored, by the address it returned. */
-function uploaded(address: string): Buffer | null {
+export function uploadedFile(address: string): Buffer | null {
   const name = address.replace(/^\/uploads\//, "");
   if (!name || /[^a-zA-Z0-9._-]/.test(name)) return null;
   const file = confineToDir(uploadsDir(), name);
@@ -68,7 +68,7 @@ async function importInto(brand: Brand, body: Record<string, unknown>): Promise<
     try { return { brand: await applyImport(brand, look, logo), found: look }; }
     catch { return { brand: await applyImport(brand, look, null), found: look }; }
   }
-  const data = uploaded(str(body.upload));
+  const data = uploadedFile(str(body.upload));
   if (!data) throw new Error("Upload the file first.");
   const name = basename(str(body.name) || "file");
   const found = await suggestFromFile(data, name);
@@ -102,7 +102,7 @@ export const handleBrandRoutes: RouteHandler = async (method, url, req, res, ctx
     if (url.pathname === "/api/brands/file") {
       const roleArg = str(body.role) as BrandFileRole;
       if (!BRAND_FILE_ROLES.includes(roleArg)) { json(400, { error: `role must be one of ${BRAND_FILE_ROLES.join(", ")}` }); return true; }
-      const data = uploaded(str(body.upload));
+      const data = uploadedFile(str(body.upload));
       if (!data) { json(400, { error: "Upload the file first." }); return true; }
       changed(await addBrandFile(brand.slug, { name: basename(str(body.name) || "file"), data }, roleArg, str(body.note) || undefined));
       return true;

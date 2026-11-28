@@ -30,6 +30,16 @@ export const PREFERENCE_SETTINGS: ReadonlyArray<FlippableSetting> = [
     description: "Accent palette applied across the app, in both light and dark mode",
   },
   {
+    // Its own key, not an eighth palette: the one-time appearance default
+    // (settings.ts) resets `palette` and must never drop the user's skin.
+    field: "skin",
+    owner: "agent",
+    validate: z.string().regex(/^[a-z0-9-]{0,40}$/),
+    runtime: false,
+    broadcast: true,
+    description: "The user's own theme for the app window, by its folder name in the skin library (the skin tool makes them); \"\" is the built-in look",
+  },
+  {
     field: "onboarded",
     owner: "agent",
     validate: z.boolean(),

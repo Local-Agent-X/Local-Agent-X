@@ -23,7 +23,8 @@ if (urlToken) {
   if (!isElectron) {
     const cleanUrl = new URL(location.href);
     cleanUrl.searchParams.delete('token');
-    history.replaceState(null, '', cleanUrl.pathname + cleanUrl.hash);
+    // Only the token leaves the address; ?skin=off and ?mobileui=1 are read later.
+    history.replaceState(null, '', cleanUrl.pathname + cleanUrl.search + cleanUrl.hash);
   }
 } else if (AUTH_TOKEN) {
   localStorage.setItem('lax_token', AUTH_TOKEN);

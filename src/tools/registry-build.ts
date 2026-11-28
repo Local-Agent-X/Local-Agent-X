@@ -35,6 +35,7 @@ import { presentationTools } from "./presentation-tools.js";
 import { pdfTools } from "./pdf-tools.js";
 import { chartTools } from "./chart-tools.js";
 import { brandTool } from "./brand-tool.js";
+import { skinTool } from "./skin-tool.js";
 import { previewTools } from "./preview-tools.js";
 import { emailTools } from "./email-tools.js";
 import { calendarTools } from "./calendar-tools.js";
@@ -79,7 +80,7 @@ export const allTools: ToolDefinition[] = applyPrompts([
   buildAppTool, appCheckTool, appRebuildTool,
   youtubeAnalyzeTool, createPageTool, extractSiteAssetsTool, connectorCreateTool, appServeBackendTool,
   ...processTools,
-  ...spreadsheetTools, ...documentTools, ...presentationTools, ...pdfTools, ...chartTools, brandTool, ...previewTools,
+  ...spreadsheetTools, ...documentTools, ...presentationTools, ...pdfTools, ...chartTools, brandTool, skinTool, ...previewTools,
   ...emailTools, ...calendarTools, ...telegramTools, ...whatsappTools, ...clipboardTools, ...sqlTools,
   ...taskTools, wrapUpTool, ...planTools, ...autopilotTools, ...opTools,
   ...restartTools, ...updateTools, showUnblockControlTool,

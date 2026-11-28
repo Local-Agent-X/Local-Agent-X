@@ -20,7 +20,7 @@ import { isLaxControlFile, laxApprovalGatedFile } from "./lax-control-files.js";
 import { evaluateFileAccess } from "./file-access.js";
 import { TOOL_PATH_ARGS } from "../../tool-registry.js";
 import { isAppAtRestSecretBasename } from "../secrets/known-secrets.js";
-import { BRAIN_BINARY_FILES, BRAIN_DIRS, BRAIN_JSON_FILES } from "../../sync/constants.js";
+import { BRAIN_BINARY_FILES, BRAIN_DIRS, BRAIN_JSON_FILES, TOMBSTONED_BRAIN_DIRS } from "../../sync/constants.js";
 import { getMessagingChannelDefinition } from "../../session/channel-registry.js";
 
 const SRC = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -71,6 +71,9 @@ function dynamicJoins(files: string[]): Record<string, readonly string[]> {
     "sync/pull-files/pull-brain.ts: sidecar": BRAIN_BINARY_FILES.flatMap((f) => [`${f}-wal`, `${f}-shm`]),
     "sync/push-files.ts: file": [...BRAIN_JSON_FILES, ...BRAIN_BINARY_FILES],
     "sync/push-files.ts: dir": BRAIN_DIRS,
+    // The library folders: one folder per brand or skin.
+    "sync/tombstones.ts: dir": [...TOMBSTONED_BRAIN_DIRS],
+    "server/static-assets.ts: library": ["brands", "skins"],
     "orchestrator/system-health.ts: file": [...storageFiles(files), "orchestrator-state.json"],
     "update-recovery.ts: rel": ["update-rollback", "updates"],
     // A PATH directory in a loop that shadows the data-dir name, not the data dir.

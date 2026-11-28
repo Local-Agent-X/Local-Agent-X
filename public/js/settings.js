@@ -154,9 +154,12 @@ function refreshAppearanceUI() {
   const mode = localStorage.getItem('lax_theme') || 'dark';
   const palette = localStorage.getItem('lax_palette') || 'aurora';
   document.querySelectorAll('#mode-seg .seg-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
-  document.querySelectorAll('.theme-card').forEach(c => c.classList.toggle('active', c.dataset.palette === palette));
-  const rt = document.getElementById('tog-rain');
-  if (rt) rt.classList.toggle('on', !!(window.phraseRain && window.phraseRain.isOn && window.phraseRain.isOn()));
+  document.querySelectorAll('#theme-grid .theme-card').forEach(c => c.classList.toggle('active', c.dataset.palette === palette));
+  const fx = document.getElementById('fx-select');
+  if (fx && window.laxEffects) {
+    if (fx.options.length <= 1) window.laxEffects.list().forEach(e => fx.add(new Option(e.label, e.id)));
+    fx.value = window.laxEffects.choice();
+  }
 }
 window.refreshAppearanceUI = refreshAppearanceUI;
 document.addEventListener('DOMContentLoaded', refreshAppearanceUI);

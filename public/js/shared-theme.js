@@ -40,7 +40,9 @@ function syncNativeChromeColor() {
 }
 
 function applyTheme(pref) {
-  const effective = getEffectiveTheme(pref);
+  // A skin with its own panel color decides whether the dark or the light
+  // rules apply, whatever the saved preference says (skin.js).
+  const effective = (window.laxSkin && window.laxSkin.forcedMode()) || getEffectiveTheme(pref);
   document.documentElement.setAttribute('data-theme', effective);
   syncNativeChromeColor();
   syncNativeTitlebarOverlay();

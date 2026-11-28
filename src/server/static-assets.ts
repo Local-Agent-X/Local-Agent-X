@@ -31,7 +31,7 @@ const AGENT_FILE_SVG_CSP = `sandbox; script-src 'none'; ${AGENT_FILE_FRAMING}`;
 export function serveProtectedAssets(method: string, url: URL, req: IncomingMessage, res: ServerResponse, config: LAXConfig, dataDir: string): boolean {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
   if (method !== "GET") return false;
-  if (!["/uploads/", "/videos/", "/images/", "/brands/", LOCAL_FILES_PREFIX].some(route => url.pathname.startsWith(route))) return false;
+  if (!["/uploads/", "/videos/", "/images/", "/brands/", "/skins/", LOCAL_FILES_PREFIX].some(route => url.pathname.startsWith(route))) return false;
 
   const authorization = req.headers.authorization || "";
   const provided = (authorization.startsWith("Bearer ") ? authorization.slice(7) : "") || url.searchParams.get("token") || "";
@@ -56,7 +56,9 @@ export function serveProtectedAssets(method: string, url: URL, req: IncomingMess
     if (ext === "svg") headers["Content-Security-Policy"] = "script-src 'none'";
     sendFileOrRange(req, res, file, headers); return true;
   }
-  if (url.pathname.startsWith("/brands/")) { serveBrandFile(url, req, res, dataDir); return true; }
+  for (const library of ["brands", "skins"] as const) {
+    if (url.pathname.startsWith(`/${library}/`)) { serveLibraryFile(library, url, req, res, dataDir); return true; }
+  }
   // A file outside the workspace, for the operator only: a signed link names a
   // served media file, never this.
   if (url.pathname.startsWith(LOCAL_FILES_PREFIX)) {
@@ -83,30 +85,31 @@ export function serveProtectedAssets(method: string, url: URL, req: IncomingMess
   return false;
 }
 
-/** A brand library file (tools/shared/brand-store.ts), for the Settings
- *  page's Brands tab: /brands/<slug>/<file>. Images show inline (an SVG with
- *  no script); anything else downloads. Not cached: a replaced logo keeps
- *  its name. */
-function serveBrandFile(url: URL, req: IncomingMessage, res: ServerResponse, dataDir: string): void {
+/** A file of a brand (tools/shared/brand-store.ts) or a skin
+ *  (skins/skin-store.ts), for the Settings page and the skin layer:
+ *  /brands/<slug>/<file>, /skins/<slug>/<file>. Pictures and videos show
+ *  inline (an SVG with no script, a video in pieces); anything else, a skin's
+ *  effect code included, downloads and never runs on this origin. Not cached:
+ *  a replaced logo or background keeps its name. */
+function serveLibraryFile(library: "brands" | "skins", url: URL, req: IncomingMessage, res: ServerResponse, dataDir: string): void {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
-  const [slug, filename, ...rest] = url.pathname.slice("/brands/".length).split("/");
+  const [slug, filename, ...rest] = url.pathname.slice(library.length + 2).split("/");
   if (!slug || !filename || rest.length || /[^a-z0-9-]/.test(slug) || /[^a-zA-Z0-9._-]/.test(filename) || filename.startsWith(".")) {
-    json(400, { error: "Invalid brand file" });
+    json(400, { error: "Invalid file" });
     return;
   }
-  const file = confineToDir(join(dataDir, "brands", slug), filename);
+  const file = confineToDir(join(dataDir, library, slug), filename);
   if (!file) { json(403, { error: "Path traversal blocked" }); return; }
   if (!existsSync(file)) { json(404, { error: "File not found" }); return; }
   const ext = (filename.split(".").pop() || "").toLowerCase();
-  const image = MEDIA_CONTENT_TYPES[ext]?.startsWith("image/");
+  const shown = /^(image|video)\//.test(MEDIA_CONTENT_TYPES[ext] ?? "");
   const headers: Record<string, string> = {
-    ...corsHeaders(req), "Content-Type": (image ? MEDIA_CONTENT_TYPES[ext] : UPLOAD_CONTENT_TYPES[ext]) || "application/octet-stream",
+    ...corsHeaders(req), "Content-Type": (shown ? MEDIA_CONTENT_TYPES[ext] : UPLOAD_CONTENT_TYPES[ext]) || "application/octet-stream",
     "Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff",
   };
-  if (!image) headers["Content-Disposition"] = `attachment; filename="${filename}"`;
+  if (!shown) headers["Content-Disposition"] = `attachment; filename="${filename}"`;
   if (ext === "svg") headers["Content-Security-Policy"] = MEDIA_SVG_CSP;
-  res.writeHead(200, headers);
-  res.end(readFileSync(file));
+  sendFileOrRange(req, res, file, headers);
 }
 
 /** Workspace files, served ONLY on the agent origin (agent-origin.ts). The

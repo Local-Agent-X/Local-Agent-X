@@ -3,14 +3,14 @@ import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync
 import { join } from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { parseMultipart, jsonResponse } from "../server-utils.js";
-import { handleSessionRoutes, handleSecurityRoutes, handleMemoryRoutes, handleMemoryLearningRoutes, handleMemoryChangeRoutes, handleMemoryProblemRoutes, handleAgentRoutes, handleApprovalRoutes, handleInboxRoutes, handleAppChatGrantRoutes, handleCalendarRoutes, handleBrandRoutes, handleIssueRoutes, handleRunsRoutes, handleAppRoutes, handleSettingsRoutes, handleBridgeRoutes, handleChatRoutes, handleMcpRoutes, handleMcpServerRoutes, handleAutopilotRoutes, handleConnectorProxyRoutes, handleHealthRoutes, handleAccountRoutes, handleArtifactRoutes, handleSessionFolderRoute, handleBrowserHistoryRoutes, handleBrowserBookmarkRoutes, handleBrowserDenyReasonRoutes, handleHumanCheckRoutes } from "../routes/index.js";
+import { handleSessionRoutes, handleSecurityRoutes, handleMemoryRoutes, handleMemoryLearningRoutes, handleMemoryChangeRoutes, handleMemoryProblemRoutes, handleAgentRoutes, handleApprovalRoutes, handleInboxRoutes, handleAppChatGrantRoutes, handleCalendarRoutes, handleBrandRoutes, handleSkinRoutes, handleIssueRoutes, handleRunsRoutes, handleAppRoutes, handleSettingsRoutes, handleBridgeRoutes, handleChatRoutes, handleMcpRoutes, handleMcpServerRoutes, handleAutopilotRoutes, handleConnectorProxyRoutes, handleHealthRoutes, handleAccountRoutes, handleArtifactRoutes, handleSessionFolderRoute, handleBrowserHistoryRoutes, handleBrowserBookmarkRoutes, handleBrowserDenyReasonRoutes, handleHumanCheckRoutes } from "../routes/index.js";
 import type { LAXConfig } from "../types.js";
 import type { Role } from "../rbac.js";
 import type { ServerContext } from "../server-context.js";
 
 const ROUTE_HANDLERS = [
   handleHealthRoutes, handleAccountRoutes, handleSessionRoutes, handleChatRoutes,
-  handleMemoryLearningRoutes, handleMemoryChangeRoutes, handleMemoryProblemRoutes, handleMemoryRoutes, handleSecurityRoutes, handleAgentRoutes, handleApprovalRoutes, handleInboxRoutes, handleCalendarRoutes, handleBrandRoutes, handleIssueRoutes,
+  handleMemoryLearningRoutes, handleMemoryChangeRoutes, handleMemoryProblemRoutes, handleMemoryRoutes, handleSecurityRoutes, handleAgentRoutes, handleApprovalRoutes, handleInboxRoutes, handleCalendarRoutes, handleBrandRoutes, handleSkinRoutes, handleIssueRoutes,
   handleRunsRoutes, handleAppChatGrantRoutes, handleAppRoutes, handleBridgeRoutes, handleSettingsRoutes,
   handleMcpRoutes, handleMcpServerRoutes, handleAutopilotRoutes, handleConnectorProxyRoutes,
   handleArtifactRoutes, handleSessionFolderRoute, handleBrowserHistoryRoutes, handleBrowserBookmarkRoutes,

@@ -2434,14 +2434,36 @@ html[data-theme="light"] .tcp-chip{background:color-mix(in srgb, var(--pv-l) 20%
 .theme-card-body{padding:11px 14px 13px;border-top:1px solid var(--border)}
 .theme-card-name{font-family:var(--mono);font-size:.82rem;color:var(--text);margin-bottom:2px}
 .theme-card-desc{font-size:.72rem;color:var(--muted);line-height:1.35}
-/* Phrase-rain canvas sits behind the UI (content is lifted to z-index:1). */
-#phrase-rain-canvas{position:fixed;inset:0;z-index:0;pointer-events:none}
+/* What sits behind the UI (content is lifted to z-index:1): a skin's
+   background (#skin-bg, skin.js), then the moving layer on top of it: the
+   shared canvas (skin-effects.js) or a skin's own sandboxed frame
+   (skin-effect-frame.js). */
+#skin-bg,#fx-canvas,#fx-frame{position:fixed;inset:0;z-index:0;pointer-events:none}
+#fx-canvas,#fx-frame{width:100%;height:100%;border:0;background:transparent}
+#skin-bg{overflow:hidden}
+/* The media overhangs the window by the blur so its edges never show soft. */
+.skin-media{position:absolute;inset:calc(var(--skin-blur,0px) * -2);width:calc(100% + var(--skin-blur,0px) * 4);height:calc(100% + var(--skin-blur,0px) * 4);background-position:center;filter:blur(var(--skin-blur,0px))}
+.skin-dim{position:absolute;inset:0;background:var(--bg);opacity:var(--skin-dim,0)}
 #sidebar,#main{position:relative;z-index:1}
-/* While rain is on, let it bleed THROUGH the surface panels (sidebar, IDE
-   panes, chat surfaces) by making their backgrounds slightly translucent —
-   so the columns are visible app-wide, not just in the empty main area. */
-body.rain-on #sidebar,
-body.rain-on #apps-ide,
-body.rain-on .ide-sidebar,
-body.rain-on .ide-panel{background:color-mix(in srgb, var(--surface) 82%, transparent)}
-body.rain-on #input-area{background:color-mix(in srgb, var(--surface) 84%, transparent)}
+/* While a background or a moving layer is on, let it show THROUGH the
+   surface panels (sidebar, IDE panes, side panel, composer) by making their
+   backgrounds translucent, so it is visible app-wide, not just in the empty
+   main area. A skin sets how solid they stay (--panel-solid). The colors
+   themselves stay opaque: the native title bar is painted from --surface. */
+body:is(.fx-on,.skin-on) #sidebar,
+body:is(.fx-on,.skin-on) #apps-ide,
+body:is(.fx-on,.skin-on) .ide-sidebar,
+body:is(.fx-on,.skin-on) .ide-panel,
+body:is(.fx-on,.skin-on) .agent-feeds,
+body:is(.fx-on,.skin-on) #input-area{background:color-mix(in srgb, var(--surface) var(--panel-solid,82%), transparent)}
+/* A skin's own background replaces the built-in hero art behind the chat
+   (#chat-bg); the two are never shown mashed together. A skin with only
+   colors or a moving layer keeps the art, tinted to its accent. */
+body.skin-on #chat-bg{display:none}
+/* Settings → Appearance → My themes */
+.skin-card-preview{height:92px;background-color:var(--surface-2);background-size:cover;background-position:center;display:flex;align-items:flex-end;gap:5px;padding:8px}
+.skin-card-preview span{width:16px;height:16px;border-radius:4px;border:1px solid rgba(128,128,128,.5)}
+.skin-fields{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px 20px;margin-top:14px}
+.skin-fields input[type=range]{width:100%;accent-color:var(--accent)}
+.skin-color{display:flex;align-items:center;gap:8px;font-size:.78rem;color:var(--text)}
+.skin-color input[type=color]{width:34px;height:24px;padding:0;border:1px solid var(--border);border-radius:5px;background:none}

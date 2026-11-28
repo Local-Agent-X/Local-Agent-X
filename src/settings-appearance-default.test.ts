@@ -56,6 +56,13 @@ describe("applyAppearanceDefaultGeneration", () => {
     expect(settings.sidebarPins).toEqual(["chat"]);
   });
 
+  it("leaves the user's own skin on when it resets the palette", () => {
+    writeFileSync(settingsPath(), JSON.stringify({ theme: "light", palette: "phosphor", skin: "winter-lodge", appearanceDefaultGen: 1 }));
+    reloadSettings();
+    expect(applyAppearanceDefaultGeneration()).toBe(true);
+    expect(loadSettings()).toMatchObject({ palette: "aurora", skin: "winter-lodge" });
+  });
+
   it("re-applies when an install is on a PRIOR generation (gen-1 phosphor → gen-2 aurora)", () => {
     writeFileSync(settingsPath(), JSON.stringify({ theme: "dark", palette: "phosphor", appearanceDefaultGen: 1 }));
     reloadSettings();

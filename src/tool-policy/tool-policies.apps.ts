@@ -299,6 +299,18 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyRow> = {
     },
     rules: [{ id: "allow-brand", decision: "allow", reason: "The user's brand library: company looks applied to Office files", priority: 50 }],
     pathArgs: [{ arg: "path", action: "read", forActions: ["list", "get", "save", "add_asset", "import", "remove_file", "remove"] }] },
+  // The skin library (skins/skin-store.ts): the look of the app's own window.
+  // Writes only inside the data dir's skins/ folder; the picture a call
+  // copies in is the `path` arg, gated like any read. The effect code it
+  // saves runs only in a sandboxed frame (public/js/skin-effect-frame.js).
+  skin: { kernel: "internal", risk: "workspace-write", capabilities: [], tags: [],
+    destructiveActions: {
+      remove: "moves a saved theme to the trash and removes it from the user's synced machines",
+      clear_background: "moves a theme's background file to the trash",
+    },
+    blurb: { say: "give the app a Christmas theme with falling snow", does: "Restyle this app's own window: a background picture or video, colors, see-through panels and a moving layer." },
+    rules: [{ id: "allow-skin", decision: "allow", reason: "The user's own look for the app window", priority: 50 }],
+    pathArgs: [{ arg: "path", action: "read", forActions: ["list", "get", "save", "set_background", "clear_background", "set_effect_code", "apply", "remove"] }] },
   create_chart:     { kernel: "internal", risk: "workspace-write", capabilities: [], tags: [], pathArgs: [{ arg: "file_path", action: "write" }], rules: [{ id: "allow-create-chart", decision: "allow", reason: "Chart PNG generation (workspace-confined)", priority: 50 }] },
   // The thumbnail is written beside the file (<file>.preview.png); the tool
   // gates that write itself through evaluateFileAccess (preview-tools.ts).

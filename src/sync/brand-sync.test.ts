@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { BRAIN_DIRS, BRAIN_DIR_EXTENSIONS } from "./constants.js";
 import { mirrorDir } from "./mirror.js";
-import { applyTombstones, brandTombstonePaths, writeTombstonesForDeletedApps } from "./tombstones.js";
+import { applyTombstones, libraryTombstonePaths, writeTombstonesForDeletedApps } from "./tombstones.js";
 
 function machine(root: string, name: string) {
   const dataDir = join(root, name);
@@ -43,14 +43,14 @@ describe("brand sync", () => {
     const a = machine(root, "a"), b = machine(root, "b");
     for (const m of [a, b]) { addBrand(m, "acme"); addBrand(m, "keep"); }
     mkdirSync(join(repo, "brands", "acme"), { recursive: true });
-    writeTombstonesForDeletedApps(brandTombstonePaths(a, repo)); // baseline
+    writeTombstonesForDeletedApps(libraryTombstonePaths(a, repo, "brands")); // baseline
     // Deleted on A.
     rmSync(join(a, "brands", "acme"), { recursive: true, force: true });
-    writeTombstonesForDeletedApps(brandTombstonePaths(a, repo));
+    writeTombstonesForDeletedApps(libraryTombstonePaths(a, repo, "brands"));
     expect(existsSync(join(repo, ".tombstones", "brands", "acme.json"))).toBe(true);
     expect(existsSync(join(repo, "brands", "acme"))).toBe(false);
     // B pulls.
-    applyTombstones(brandTombstonePaths(b, repo));
+    applyTombstones(libraryTombstonePaths(b, repo, "brands"));
     expect(existsSync(join(b, "brands", "acme"))).toBe(false);
     expect(existsSync(join(b, "brands", "keep"))).toBe(true);
     // App tombstones live one level up and are not touched by brands.

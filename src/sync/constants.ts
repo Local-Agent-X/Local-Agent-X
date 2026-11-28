@@ -112,7 +112,13 @@ export const BRAIN_DIRS: readonly string[] = [
   "agent-runs",
   "brands",
   "dashboards",
+  "skins",
 ] as const;
+
+// Brain folders holding one folder per item the user can delete (a brand, a
+// skin). The mirror never deletes, so a removed item travels as a tombstone
+// (tombstones.ts libraryTombstonePaths).
+export const TOMBSTONED_BRAIN_DIRS: ReadonlySet<string> = new Set(["brands", "skins"]);
 
 // The brand library (tools/shared/brand-store.ts) keeps a company's Office
 // templates beside its logo, and a template is the point of saving one, so

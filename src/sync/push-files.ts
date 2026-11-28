@@ -7,6 +7,7 @@ import { loadSettings, settingsPath } from "../settings.js";
 import {
   BRAIN_BINARY_FILES,
   BRAIN_DIRS,
+  TOMBSTONED_BRAIN_DIRS,
   BRAIN_DIR_EXTENSIONS,
   BRAIN_JSON_FILES,
   MISSION_FILES,
@@ -14,7 +15,7 @@ import {
 } from "./constants.js";
 import { engineCheckoutMarker, mirrorDir, pruneUnsyncedEntries } from "./mirror.js";
 import { exportFactsForSync } from "./facts-sync.js";
-import { brandTombstonePaths, tombstonePaths, writeTombstonesForDeletedApps } from "./tombstones.js";
+import { libraryTombstonePaths, tombstonePaths, writeTombstonesForDeletedApps } from "./tombstones.js";
 import { readSyncedNotes, recordSyncedNotes } from "./synced-notes.js";
 import { pushSessions } from "./push-sessions.js";
 
@@ -164,9 +165,9 @@ export async function copyToSync(dataDir: string, syncDir: string, config: SyncC
     const src = join(dataDir, dir);
     if (!existsSync(src)) continue;
     try {
-      // A brand is a folder that can be deleted, and the mirror never
-      // deletes, so a removed brand travels as a tombstone (tombstones.ts).
-      if (dir === "brands") writeTombstonesForDeletedApps(brandTombstonePaths(dataDir, syncDir));
+      // A brand or a skin is a folder that can be deleted, and the mirror never
+      // deletes, so a removed one travels as a tombstone (tombstones.ts).
+      if (TOMBSTONED_BRAIN_DIRS.has(dir)) writeTombstonesForDeletedApps(libraryTombstonePaths(dataDir, syncDir, dir));
       await mirrorDir(src, join(syncDir, dir), /* additiveOnly */ true, BRAIN_DIR_EXTENSIONS[dir]);
     } catch (e) {
       logger.warn(`[sync] brain push skipped dir ${dir}: ${(e as Error).message}`);

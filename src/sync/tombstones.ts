@@ -28,9 +28,10 @@ const logger = createLogger("sync.tombstones");
 // with the current set of apps and write zero tombstones — so a brand
 // new machine doesn't retroactively tombstone every app the user has.
 
-// The same mechanism carries brand deletions (data-dir brands/<slug>/, the
-// brand library): one folder per item, mirrored additively, so a delete
-// needs a tombstone to reach the other machines.
+// The same mechanism carries deletions in the library folders
+// (constants.ts TOMBSTONED_BRAIN_DIRS: brands/<slug>/, skins/<slug>/): one
+// folder per item, mirrored additively, so a delete needs a tombstone to
+// reach the other machines.
 export interface TombstonePaths {
   snapshotFile: string;
   tombstonesDir: string;
@@ -49,13 +50,13 @@ export function tombstonePaths(dataDir: string, syncDir: string): TombstonePaths
   };
 }
 
-/** Brands: data-dir brands/<slug>/, mirrored at sync-repo/brands/. */
-export function brandTombstonePaths(dataDir: string, syncDir: string): TombstonePaths {
+/** A library folder (brands, skins): data-dir <dir>/<slug>/, mirrored at sync-repo/<dir>/. */
+export function libraryTombstonePaths(dataDir: string, syncDir: string, dir: string): TombstonePaths {
   return {
-    snapshotFile: join(dataDir, "sync-state", "last-pushed-brands.json"),
-    tombstonesDir: join(syncDir, ".tombstones", "brands"),
-    appsDir: join(dataDir, "brands"),
-    syncItemsDir: join(syncDir, "brands"),
+    snapshotFile: join(dataDir, "sync-state", `last-pushed-${dir}.json`),
+    tombstonesDir: join(syncDir, ".tombstones", dir),
+    appsDir: join(dataDir, dir),
+    syncItemsDir: join(syncDir, dir),
   };
 }
 
@@ -156,6 +157,15 @@ export function writeTombstonesForDeletedApps(paths: TombstonePaths): void {
  */
 export function tombstoneAppEagerly(syncDir: string, name: string): void {
   tombstoneEagerly(join(syncDir, ".tombstones"), name);
+}
+
+/** A library item (a brand, a skin) the user just removed: its tombstone
+ *  now, when a sync repo exists; without one the push-time snapshot diff
+ *  writes it on the next sync. */
+export function tombstoneLibraryItemEagerly(dataDir: string, dir: string, slug: string): void {
+  const syncDir = join(dataDir, "sync-repo");
+  try { if (existsSync(syncDir)) tombstoneEagerly(join(syncDir, ".tombstones", dir), slug); }
+  catch { /* the push-time snapshot diff writes it */ }
 }
 
 /** The eager tombstone for any tombstoned item kind, given its tombstone dir. */

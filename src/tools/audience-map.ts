@@ -251,6 +251,9 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   // Saves a company's look when the user describes it in chat; the Office
   // tools then apply it by code (tools/shared/brand-store.ts).
   brand:        ["main-chat"],
+  // Builds and turns on the user's own look for the app window when they
+  // ask for one in chat (skins/skin-store.ts).
+  skin:         ["main-chat"],
   presentation: ["main-chat", "spawned-agent", "operator"],
   // The figures check the user asks for, from the chat they asked in.
   figures_check: ["main-chat"],

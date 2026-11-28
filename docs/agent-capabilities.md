@@ -159,8 +159,9 @@ demand via tool search and aren't all listed here.)
 
 - `document`
 - `brand`
+- `skin` — Restyle this app's own window: a background picture or video, colors, see-through panels and a moving layer. _e.g._ "give the app a Christmas theme with falling snow"
 - `presentation`
 - `figures_check` — Fact-check a deck's or document's figures against independent sources: the rest of them, or every one. _e.g._ "check the rest of the figures in that deck"
 
 ---
-_83 capabilities · 58 with a description · 25 awaiting a blurb (add one to the tool's policy row)._
+_84 capabilities · 59 with a description · 25 awaiting a blurb (add one to the tool's policy row)._

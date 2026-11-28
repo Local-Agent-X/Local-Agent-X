@@ -10,7 +10,7 @@ import { extname, join } from "node:path";
 import { getLaxDir } from "../../lax-data-dir.js";
 import { writeValidatedFile } from "../../security/layer/index.js";
 import { moveToTrash } from "../../safe-delete.js";
-import { tombstoneEagerly } from "../../sync/tombstones.js";
+import { tombstoneLibraryItemEagerly } from "../../sync/tombstones.js";
 import { brandDir, findBrand, writeBrand, type Brand, type BrandAssetKind } from "./brand-store.js";
 
 /** Where a file goes in the brand: one of the three images the documents
@@ -109,8 +109,6 @@ export async function removeBrand(ref: string): Promise<Brand> {
   if (!brand) throw new Error(`No saved brand "${ref}".`);
   const trashed = await moveToTrash(brandDir(brand.slug), `brand_remove:${brand.slug}`);
   if (!trashed && existsSync(brandDir(brand.slug))) throw new Error(`Brand "${brand.name}" could not be moved to the trash.`);
-  const syncDir = join(getLaxDir(), "sync-repo");
-  try { if (existsSync(syncDir)) tombstoneEagerly(join(syncDir, ".tombstones", "brands"), brand.slug); }
-  catch { /* the push-time snapshot diff writes it on the next sync */ }
+  tombstoneLibraryItemEagerly(getLaxDir(), "brands", brand.slug);
   return brand;
 }

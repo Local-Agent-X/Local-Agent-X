@@ -151,15 +151,33 @@ export const PARAMETER_PAIR_SRC =
   String.raw`<\s*${NAMESPACE_PREFIX}${PARAMETER_TAG}(?:\s*=\s*"?([\w.\-]+)"?|\s+name\s*=\s*["']([\w.\-]+)["'])\s*>` +
   String.raw`([\s\S]*?)` + closerSource([PARAMETER_TAG]);
 
-/** Parse parameter pairs. Values that parse as JSON keep their type; the
- *  rest stay trimmed strings. `end` is the offset just past the last
- *  closed pair in `body`. */
-export function parseParameterPairs(body: string): { args: Record<string, unknown>; count: number; end: number } {
+/** A `<parameter>` opener or closer on its own, namespace-tolerant. */
+const PARAMETER_TAG_RE = new RegExp(
+  String.raw`<\s*${NAMESPACE_PREFIX}${PARAMETER_TAG}\b|` + closerSource([PARAMETER_TAG]), "i");
+
+/**
+ * Parse parameter pairs. Values that parse as JSON keep their type; the
+ * rest stay trimmed strings. `end` is the offset just past the last
+ * closed pair in `body`.
+ *
+ * `whole` is the pair form of the truncation invariant: false when a
+ * `<parameter>` tag is left over outside the closed pairs. An opener with
+ * no closer is an argument that was still being written when the block's
+ * closer arrived (or whose value holds that closer); a closer with no
+ * opener is what remains of a value that held `</parameter>` and was cut
+ * at it. Either way the closed pairs are part of a call, not the call:
+ * `write` with its path and no content, `bash` with half its command.
+ */
+export function parseParameterPairs(body: string): { args: Record<string, unknown>; count: number; end: number; whole: boolean } {
   const re = new RegExp(PARAMETER_PAIR_SRC, "gi");
   const args: Record<string, unknown> = {};
   let count = 0, end = 0;
+  let outside = "";
+  let from = 0;
   let m: RegExpExecArray | null;
   while ((m = re.exec(body)) !== null) {
+    outside += body.slice(from, m.index);
+    from = re.lastIndex;
     const key = (m[1] || m[2] || "").trim();
     const rawV = m[3].trim();
     if (key) {
@@ -168,7 +186,8 @@ export function parseParameterPairs(body: string): { args: Record<string, unknow
       end = re.lastIndex;
     }
   }
-  return { args, count, end };
+  outside += body.slice(from);
+  return { args, count, end, whole: !PARAMETER_TAG_RE.test(outside) };
 }
 
 const NAME_TOKEN_RE = /^[A-Za-z][\w.\-]*$/;

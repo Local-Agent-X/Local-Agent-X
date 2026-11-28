@@ -102,7 +102,7 @@ export function scanNamedTags(src: ScanSource, hits: SyntaxHit[], from = 0, to =
     else {
       const body = s.slice(p, cm.index);
       const pairs = parseParameterPairs(body);
-      if (pairs.count > 0) argsObj = pairs.args;
+      if (pairs.count > 0) argsObj = pairs.whole ? pairs.args : null;
       else if (body.trim() === "") argsObj = {};
       // else: unstructured body — recognized, no candidate
     }
@@ -119,6 +119,7 @@ function wrapperBodyCandidate(src: ScanSource, tag: string, p: number, bodyEnd: 
   const body = src.text.slice(p, bodyEnd);
   const pairs = parseParameterPairs(body);
   if (pairs.count > 0) {
+    if (!pairs.whole) return null; // an argument was cut short: part of a call
     return nameAttr ? { name: nameAttr, argsJson: JSON.stringify(pairs.args) } : envelopeCandidate(pairs.args);
   }
   const inner = body.trim();

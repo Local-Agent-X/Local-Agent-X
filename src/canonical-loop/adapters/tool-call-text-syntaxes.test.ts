@@ -467,6 +467,39 @@ describe("truncation invariant — an opener with no closer never promotes", () 
   });
 });
 
+describe("truncation invariant — a closed block whose arguments are not whole never promotes", () => {
+  // The block's closer arrived, but a <parameter> tag inside it has no
+  // partner: an argument was still being written, or its value held a closer
+  // and was cut at it. The closed pairs are part of a call. Each of these
+  // used to run: write with a path and no content, write with the first two
+  // characters of its content, bash with `echo "`.
+  const partial: Array<[string, string]> = [
+    ["an argument never closed", '<invoke name="write"><parameter name="path">a.txt</parameter><parameter name="content">hello world</invoke>'],
+    ["a value holding the block's closer", '<invoke name="write"><parameter name="path">a.md</parameter><parameter name="content">see </invoke> here</parameter></invoke>'],
+    ["a value holding its own closer", '<invoke name="write"><parameter name="path">a.md</parameter><parameter name="content">a </parameter> b</parameter></invoke>'],
+    ["a shell command holding the closer", '<function=bash><parameter=command>echo "</parameter>" && rm -rf build</parameter></function>'],
+    ["in a wrapper with the name on the opener", '<tool_use name="write"><parameter name="path">a.txt</parameter><parameter name="content">hello</tool_use>'],
+    ["in a wrapper with the name in a pair", '<tool_call><parameter name="name">write</parameter><parameter name="path">a.txt</parameter><parameter name="content">hello</tool_call>'],
+    ["in a child of function_calls", '<function_calls><invoke name="write"><parameter name="path">a.txt</parameter><parameter name="content">hello</invoke></function_calls>'],
+    ["namespaced", '<ns:invoke name="write"><ns:parameter name="path">a.txt</ns:parameter><ns:parameter name="content">hello</ns:invoke>'],
+  ];
+  for (const [label, text] of partial) {
+    it(`${label}: recognized, promoted:false, extractor emits nothing`, () => {
+      expect(extractToolCallsFromText(text, TOOLS).toolCalls).toHaveLength(0);
+      const ranges = findTextToolCallRanges(text, TOOLS);
+      expect(ranges.length).toBeGreaterThan(0);
+      expect(ranges[0].start).toBe(0);
+      expect(ranges.every((r) => !r.promoted)).toBe(true);
+    });
+  }
+
+  it("whole pairs still promote, with text between them", () => {
+    const { call } = single('<invoke name="write">ok\n<parameter name="path">a.txt</parameter>\nand\n<parameter name="content">hello</parameter>\n</invoke>');
+    expect(call.name).toBe("write");
+    expect(JSON.parse(call.arguments)).toEqual({ path: "a.txt", content: "hello" });
+  });
+});
+
 describe("weak bracket marker — exact names only", () => {
   it("[NAME]{json} with a near-miss name does not promote (no fuzzy ladder for the weakest marker)", () => {
     for (const text of ['[Read]{"path":"a.txt"}', '[web-search]{"query":"x"}', '- [reed] {"path": "a.txt"} is the shape']) {

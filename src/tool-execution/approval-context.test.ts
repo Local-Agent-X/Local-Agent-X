@@ -58,7 +58,7 @@ describe("buildApprovalContext — the line comes from the tool, or its shell co
     expect(buildApprovalContext(readTool, "read", { path: "a/readme.txt" })).toBe("Read file: readme.txt");
     expect(buildApprovalContext(webFetchTool, "web_fetch", { url: "https://e.com" })).toBe("Fetch webpage: https://e.com");
     expect(buildApprovalContext(createHttpRequestTool(), "http_request", { method: "POST", url: "https://api.e.com" })).toBe("API call: POST https://api.e.com");
-    expect(buildApprovalContext(buildAppTool, "build_app", { name: "todo" })).toBe("Build app: todo");
+    expect(buildApprovalContext(buildAppTool, "build_app", { name: "todo" })).toBe("Start app: todo");
   });
 
   it("a tool that says nothing reads as its name and the model's args, never the server's stamps", () => {

@@ -64,11 +64,21 @@ public static class InstallerShell
         return i >= 0 ? s.Substring(i + 1) : s;
     }
 
+    // How long a cancelled child gets to end once it has been told to.
+    const int StopGraceMs = 5000;
+
     // Run a child process, streaming stdout+stderr to onLogLine (final-frame
-    // collapsed). Returns true on exit code 0. onLogLine is optional so the
-    // helper stays usable from contexts without a status sink.
-    public static bool RunStreaming(string cmd, string[] args, Action<string>? onLogLine = null)
+    // collapsed). Returns true on exit code 0.
+    //
+    // ct is required: this is the one wait in the installer with no limit of
+    // its own, and winget, Homebrew and apt can each hold it for minutes. A
+    // cancelled install stops the child and everything it started, then throws
+    // so the run unwinds. A child that cannot be stopped (a package manager
+    // under sudo belongs to root) is left to finish on its own, which the log
+    // says, and the run still unwinds: Cancel never waits on a package manager.
+    public static bool RunStreaming(string cmd, string[] args, Action<string>? onLogLine, CancellationToken ct)
     {
+        ct.ThrowIfCancellationRequested();
         var psi = new ProcessStartInfo
         {
             FileName = cmd,
@@ -93,10 +103,22 @@ public static class InstallerShell
             p.ErrorDataReceived  += (_, e) => { if (!string.IsNullOrWhiteSpace(e.Data)) onLogLine?.Invoke(LastFrame(e.Data!)); };
             p.BeginOutputReadLine();
             p.BeginErrorReadLine();
+            using (ct.Register(() => { try { p.Kill(entireProcessTree: true); } catch { /* already exited, or not ours to stop */ } }))
+            {
+                while (!p.WaitForExit(200))
+                {
+                    if (!ct.IsCancellationRequested) continue;
+                    if (!p.WaitForExit(StopGraceMs))
+                        onLogLine?.Invoke($"[warn] {cmd} could not be stopped and is finishing on its own");
+                    break;
+                }
+            }
+            ct.ThrowIfCancellationRequested();
+            // The no-argument wait also drains the output handlers above.
             p.WaitForExit();
             return p.ExitCode == 0;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             onLogLine?.Invoke($"[error] {ex.Message}");
             return false;

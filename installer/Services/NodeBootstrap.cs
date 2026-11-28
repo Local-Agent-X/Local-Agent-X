@@ -59,8 +59,8 @@ public class NodeBootstrap
     }
 
     // Returns true on success, false if install failed. ct aborts the portable
-    // runtime download and keeps a cancelled install from moving on to the
-    // winget/brew fallback; those package managers run to completion once started.
+    // runtime download and every fallback after it: a package manager already
+    // running is stopped (InstallerShell.RunStreaming), not waited for.
     public bool InstallNode(CancellationToken ct)
     {
         OnStatus?.Invoke("Installing Node.js 24 (LTS)…");
@@ -91,7 +91,7 @@ public class NodeBootstrap
                 "install", "OpenJS.NodeJS.LTS",
                 "--accept-package-agreements", "--accept-source-agreements",
                 "--silent",
-            });
+            }, ct);
             SpliceNodeDir();
             return NodeAvailable();
         }
@@ -115,7 +115,7 @@ public class NodeBootstrap
                 // password — that path requires the user to have brew or admin.)
                 var brewOk = RunStreaming("/bin/bash", new[] {
                     "-c", "NONINTERACTIVE=1 /bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"",
-                });
+                }, ct);
                 if (!brewOk) return false;
                 // The Homebrew installer writes to /opt/homebrew/bin (Apple
                 // Silicon) or /usr/local/bin (Intel), but our process PATH was
@@ -124,15 +124,15 @@ public class NodeBootstrap
                 InstallerShell.SplicePath("/opt/homebrew/bin");
                 InstallerShell.SplicePath("/usr/local/bin");
             }
-            var nodeOk = RunStreaming("brew", new[] { "install", "node@24" });
+            var nodeOk = RunStreaming("brew", new[] { "install", "node@24" }, ct);
             if (!nodeOk) return false;
-            RunStreaming("brew", new[] { "link", "--overwrite", "--force", "node@24" });
+            RunStreaming("brew", new[] { "link", "--overwrite", "--force", "node@24" }, ct);
             return true;
         }
         // Linux
         OnStatus?.Invoke("Installing Node 24 via apt…");
-        RunStreaming("/bin/bash", new[] { "-c", "curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -" });
-        return RunStreaming("sudo", new[] { "apt-get", "install", "-y", "nodejs" });
+        RunStreaming("/bin/bash", new[] { "-c", "curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -" }, ct);
+        return RunStreaming("sudo", new[] { "apt-get", "install", "-y", "nodejs" }, ct);
     }
 
     // winget installs to Program Files\nodejs; splice it into this process's
@@ -207,7 +207,7 @@ public class NodeBootstrap
             Directory.CreateDirectory(runtimeDir);
             // tar ships on every macOS; --strip-components=1 drops the version
             // dir so node lands at ~/.lax/runtime/bin/node.
-            if (!RunStreaming("/usr/bin/tar", new[] { "-xzf", tgz, "-C", runtimeDir, "--strip-components=1" }))
+            if (!RunStreaming("/usr/bin/tar", new[] { "-xzf", tgz, "-C", runtimeDir, "--strip-components=1" }, ct))
                 return false;
             File.WriteAllText(Path.Combine(runtimeDir, ".node-version"), NODE_FALLBACK_VERSION);
             InstallerShell.SplicePath(Path.Combine(runtimeDir, "bin"));
@@ -235,6 +235,6 @@ public class NodeBootstrap
 
     // PATH/process helpers live in InstallerShell. These thin wrappers forward
     // this bootstrap's OnLogLine sink so the call sites below read unchanged.
-    bool RunStreaming(string cmd, string[] args) => InstallerShell.RunStreaming(cmd, args, OnLogLine);
+    bool RunStreaming(string cmd, string[] args, CancellationToken ct) => InstallerShell.RunStreaming(cmd, args, OnLogLine, ct);
     bool HasOnPath(string cmd) => InstallerShell.HasOnPath(cmd);
 }

@@ -16,6 +16,7 @@ import type { LiveWorker } from "../canonical-loop/index.js";
 import type { FieldAgentStatus } from "../agency/handler-types.js";
 import { sendFrame } from "./frames.js";
 import { OP_TYPE } from "../ops/op-types.js";
+import { warmOpIndex } from "../ops/op-index.js";
 import { basename } from "node:path";
 
 export interface WorkersSnapshotSources {
@@ -108,6 +109,11 @@ async function defaultSources(): Promise<WorkersSnapshotSources> {
 }
 
 export async function sendWorkersSnapshot(ws: WebSocket, sources?: WorkersSnapshotSources): Promise<void> {
+  // The live-worker listing asks the op index. While its first pass is still
+  // running in the background (a server start), asking finishes the whole pass
+  // in one go on this thread: 1.2 s in a start's profile, more with a bigger
+  // op store. The snapshot waits for the pass instead; after it, this is free.
+  if (!sources) await warmOpIndex();
   const frame = buildWorkersSnapshot(sources ?? await defaultSources());
   if (ws.readyState === 1 /* OPEN */) sendFrame(ws, frame);
 }

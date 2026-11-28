@@ -28,7 +28,9 @@ interface Seen<T> { mtimeMs: number; size: number; value: T | undefined; settled
 export interface OpScanner<T> {
   /** Every readable op's projection, by id, current as of this call. */
   refresh(): ReadonlyMap<string, T>;
-  /** The same first pass, yielding to the event loop every few ops. */
+  /** The same first pass, yielding to the event loop every few ops. It runs
+   *  once: a second call returns the first one's promise, so a caller that
+   *  must not hold the thread can wait for it instead of calling refresh. */
   warm(pause?: () => Promise<void>): Promise<void>;
 }
 
@@ -47,6 +49,7 @@ export function createOpScanner<T>(
 ): OpScanner<T> {
   const seen = new Map<string, Seen<T>>();
   const values = new Map<string, T>();
+  let warming: Promise<void> | undefined;
 
   const visit = (id: string): void => {
     let entry = seen.get(id);
@@ -74,12 +77,15 @@ export function createOpScanner<T>(
       for (const id of list()) visit(id);
       return values;
     },
-    async warm(pause = () => new Promise<void>((resolve) => setImmediate(resolve))) {
-      const ids = list();
-      for (let i = 0; i < ids.length; i++) {
-        visit(ids[i]);
-        if ((i + 1) % WARM_BATCH === 0) await pause();
-      }
+    warm(pause = () => new Promise<void>((resolve) => setImmediate(resolve))) {
+      // One pass, however many ask for it: a later caller waits on the first.
+      return (warming ??= (async () => {
+        const ids = list();
+        for (let i = 0; i < ids.length; i++) {
+          visit(ids[i]);
+          if ((i + 1) % WARM_BATCH === 0) await pause();
+        }
+      })());
     },
   };
 }
@@ -157,7 +163,9 @@ export function openOpIds(): string[] {
   return opIdsWhere((facts) => facts.open);
 }
 
-/** Fill the index in the background so the first query does not pay for it. */
+/** Fill the index in the background so the first query does not pay for it.
+ *  Resolves when that first pass is done; later calls resolve at once. A query
+ *  made before then finishes the whole pass in one go on the calling thread. */
 export function warmOpIndex(): Promise<void> {
   return theIndex().warm();
 }

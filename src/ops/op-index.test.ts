@@ -104,6 +104,23 @@ describe("createOpScanner", () => {
     expect(s.refresh().size).toBe(120);
     expect(reads).toEqual([]); // the warm pass was the first pass
   });
+
+  it("warms once: a caller that asks while the pass is running waits on that pass", async () => {
+    for (let i = 0; i < 120; i++) record(`op_${i}`, "completed");
+    const s = scanner();
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const first = s.warm(() => held);
+    const second = s.warm();
+    expect(second).toBe(first);
+    expect(reads).toHaveLength(50); // stopped at the first pause, not finished by the second caller
+    release();
+    await second;
+    expect(reads).toHaveLength(120);
+    reads = [];
+    await s.warm();
+    expect(reads).toEqual([]);
+  });
 });
 
 describe("opFactsOf", () => {

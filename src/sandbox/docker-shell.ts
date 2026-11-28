@@ -2,7 +2,7 @@
 // one throwaway `docker run` per command under the fixed security flags below.
 // Callers reach it through the sandbox facade (index.ts).
 
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -79,6 +79,40 @@ export function isDockerAvailable(): boolean {
   } catch {
     return false;
   }
+}
+
+const DOCKER_PROBE_TTL_MS = 10_000;
+let probe: { at: number; answer: Promise<boolean> } | undefined;
+
+function dockerInfo(docker: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    execFile(docker, ["info"], { timeout: 5000, windowsHide: true }, (err) => (err ? reject(err) : resolve()));
+  });
+}
+
+/**
+ * Whether Docker is available, for a request handler. isDockerAvailable runs
+ * `docker info` and waits for it on the server's one thread: half a second
+ * when Docker answers and up to five when it hangs, on pages that ask every
+ * few seconds. This asks without holding the thread, and one answer serves
+ * every caller for ten seconds.
+ */
+export function probeDockerAvailable(deps: {
+  now?: () => number;
+  executable?: () => string | null;
+  info?: (docker: string) => Promise<void>;
+} = {}): Promise<boolean> {
+  const now = (deps.now ?? Date.now)();
+  if (probe && now - probe.at < DOCKER_PROBE_TTL_MS) return probe.answer;
+  const docker = (deps.executable ?? dockerExecutable)();
+  const answer = docker ? (deps.info ?? dockerInfo)(docker).then(() => true, () => false) : Promise.resolve(false);
+  probe = { at: now, answer };
+  return answer;
+}
+
+/** Test seam: forget the last answer. */
+export function _resetDockerProbeForTest(): void {
+  probe = undefined;
 }
 
 /**

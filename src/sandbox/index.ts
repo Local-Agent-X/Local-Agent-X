@@ -16,7 +16,7 @@ import { isDockerAvailable } from "./docker-shell.js";
 import { beginApprovalWait } from "../approval-wait.js";
 import { resolveWindowsShell } from "../tools/shell-env.js";
 export { ensureWinCageGrants } from "./win-cage-grants.js";
-export { execInSandbox, isDockerAvailable } from "./docker-shell.js";
+export { execInSandbox, isDockerAvailable, probeDockerAvailable } from "./docker-shell.js";
 const logger = createLogger("sandbox");
 
 export type { SandboxMode } from "./types.js";

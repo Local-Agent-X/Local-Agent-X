@@ -23,7 +23,7 @@ export const handleSystemRoutes: RouteHandler = async (method, url, req, res, ct
 
   // System status
   if (method === "GET" && url.pathname === "/api/system-status") {
-    const { getSandboxStatus, isDockerAvailable, isGuardedUsable } = await import("../../sandbox/index.js");
+    const { getSandboxStatus, probeDockerAvailable, isGuardedUsable } = await import("../../sandbox/index.js");
     const { loadProfileName } = await import("../../autonomy/profile-store.js");
     const { getMemoryCanaryStatus } = await import("../../server/background-jobs/memory-canary.js");
     const threatData = getThreatDashboard();
@@ -34,7 +34,7 @@ export const handleSystemRoutes: RouteHandler = async (method, url, req, res, ct
       profile: ctx.config.profile, toolApproval: ctx.config.toolApproval,
       autonomyProfile: loadProfileName(),
       retentionDays: ctx.config.retentionDays, logLevel: ctx.config.logLevel,
-      sandbox: { mode: sandboxStatus.effectiveMode, ...sandboxStatus, dockerAvailable: isDockerAvailable(), guardedAvailable: isGuardedUsable() },
+      sandbox: { mode: sandboxStatus.effectiveMode, ...sandboxStatus, dockerAvailable: await probeDockerAvailable(), guardedAvailable: isGuardedUsable() },
       security: { threatsBlocked: threatData.stats?.totalBlocked || 0, threatLevel: threatData.currentThreatLevel || "normal", recentEvents: (threatData.recentEvents || []).slice(0, 5) },
       providers: providerHealth,
       tools: { totalCalls: Object.values(tStats).reduce((sum, t) => sum + (t.totalCalls || 0), 0), successRate: getToolSuccessRate(), recentFailures: getRecentFailures(5) },
@@ -78,10 +78,10 @@ export const handleSystemRoutes: RouteHandler = async (method, url, req, res, ct
 
   // Sandbox
   if (method === "GET" && url.pathname === "/api/sandbox") {
-    const { getSandboxStatus, isDockerAvailable, isGuardedUsable } = await import("../../sandbox/index.js");
+    const { getSandboxStatus, probeDockerAvailable, isGuardedUsable } = await import("../../sandbox/index.js");
     const status = getSandboxStatus();
     json(200, {
-      mode: status.effectiveMode, ...status, dockerAvailable: isDockerAvailable(), guardedAvailable: isGuardedUsable(),
+      mode: status.effectiveMode, ...status, dockerAvailable: await probeDockerAvailable(), guardedAvailable: isGuardedUsable(),
       dockerDownloadUrl: "https://www.docker.com/products/docker-desktop/",
       ...(process.platform === "win32" ? { windowsCage: await windowsCageView() } : {}),
     }); return true;

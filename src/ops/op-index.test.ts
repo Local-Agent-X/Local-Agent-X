@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createOpScanner, opFactsOf } from "./op-index.js";
+import { BULK_READ, createOpScanner, opFactsOf, type BulkRead } from "./op-index.js";
 import type { Op, OpStatus } from "./types.js";
 
 let dir: string;
@@ -120,6 +120,40 @@ describe("createOpScanner", () => {
     reads = [];
     await s.warm();
     expect(reads).toEqual([]);
+  });
+
+  // A query that pays for the first pass holds the server's thread for it.
+  // It is reported, so the caller that should have waited is named in the log.
+  describe("a query that reads much of the store itself", () => {
+    const reported: BulkRead[] = [];
+    const reporting = () => createOpScanner(dir, read, opFactsOf, (op) => !opFactsOf(op).open, (pass) => reported.push(pass));
+    beforeEach(() => { reported.length = 0; });
+
+    it("is reported with how many records it read", () => {
+      for (let i = 0; i < BULK_READ; i++) record(`op_${i}`, "completed");
+      const s = reporting();
+      s.refresh();
+      expect(reported).toEqual([{ read: BULK_READ, ms: expect.any(Number) }]);
+      s.refresh();
+      expect(reported).toHaveLength(1); // the next query reads nothing
+    });
+
+    it("is not reported once the background pass has read the store", async () => {
+      for (let i = 0; i < BULK_READ; i++) record(`op_${i}`, "completed");
+      const s = reporting();
+      await s.warm();
+      s.refresh();
+      expect(reported).toEqual([]);
+    });
+
+    it("is not reported for the few ops that moved since the last query", () => {
+      for (let i = 0; i < BULK_READ - 1; i++) record(`op_${i}`, "running");
+      const s = reporting();
+      s.refresh();
+      for (let i = 0; i < 5; i++) { record(`op_${i}`, "completed"); touch(`op_${i}`, 5); }
+      s.refresh();
+      expect(reported).toEqual([]);
+    });
   });
 });
 

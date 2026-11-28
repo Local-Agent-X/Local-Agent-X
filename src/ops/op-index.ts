@@ -13,15 +13,20 @@
  * directory listing, a stat per op still in flight, and a read of the ops it
  * returns. The first pass still reads every record once, one at a time (only
  * the facts are kept); the server warms it in the background at boot, yielding
- * as it goes ({@link warmOpIndex}).
+ * as it goes ({@link warmOpIndex}). A query that arrives before that pass is
+ * done finishes it on the calling thread, and says so in the log with who
+ * asked ({@link BULK_READ}).
  *
  * The scan is shared with the pre-blessed-secrets check (pre-bless.ts), which
  * was the first to need it and kept its own copy.
  */
 import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { createLogger } from "../logger.js";
 import { OPS_BASE, TERMINAL_STATUSES, readOp } from "./op-store.js";
 import type { Op } from "./types.js";
+
+const logger = createLogger("ops.op-index");
 
 interface Seen<T> { mtimeMs: number; size: number; value: T | undefined; settled: boolean }
 
@@ -37,6 +42,16 @@ export interface OpScanner<T> {
 const WARM_BATCH = 50;
 
 /**
+ * Records read by one query, on its caller's thread, from which the query is
+ * reported. In steady state a query reads the few ops that moved since the
+ * last one; this many at once means it paid for the first pass.
+ */
+export const BULK_READ = 100;
+
+/** One query's own reading of the store: how many records, and how long it held the thread. */
+export interface BulkRead { read: number; ms: number }
+
+/**
  * An incremental scan of `opsDir`: `project` is what to keep of an op, and
  * `settled` says the op will never change again. An unreadable record is
  * remembered by its size and mtime and not read again until it changes.
@@ -46,10 +61,12 @@ export function createOpScanner<T>(
   read: (opId: string) => Op | null,
   project: (op: Op) => T,
   settled: (op: Op) => boolean,
+  onBulkRead: (pass: BulkRead) => void = () => {},
 ): OpScanner<T> {
   const seen = new Map<string, Seen<T>>();
   const values = new Map<string, T>();
   let warming: Promise<void> | undefined;
+  let reads = 0;
 
   const visit = (id: string): void => {
     let entry = seen.get(id);
@@ -59,6 +76,7 @@ export function createOpScanner<T>(
     catch { seen.delete(id); values.delete(id); return; } // a folder with no record yet
     if (entry && entry.mtimeMs === stat.mtimeMs && entry.size === stat.size) return;
     const op = read(id);
+    reads++;
     entry = { mtimeMs: stat.mtimeMs, size: stat.size, value: op ? project(op) : undefined, settled: !!op && settled(op) };
     seen.set(id, entry);
     if (entry.value === undefined) values.delete(id); else values.set(id, entry.value);
@@ -74,7 +92,10 @@ export function createOpScanner<T>(
 
   return {
     refresh() {
+      const before = reads;
+      const started = performance.now();
       for (const id of list()) visit(id);
+      if (reads - before >= BULK_READ) onBulkRead({ read: reads - before, ms: performance.now() - started });
       return values;
     },
     warm(pause = () => new Promise<void>((resolve) => setImmediate(resolve))) {
@@ -135,9 +156,24 @@ export function opFactsOf(op: Op): OpFacts {
   };
 }
 
+/**
+ * A query read much of the store itself. Each such pause was found by
+ * profiling a slow start (2026-11-24, 2026-11-27: the workers snapshot of a
+ * page that connected while the server was starting); logged with the frames
+ * that asked, the next one names itself. The fix for a caller on the server's
+ * thread is to await warmOpIndex() first.
+ */
+function reportBulkRead(pass: BulkRead): void {
+  const askedBy = (new Error().stack ?? "").split("\n").slice(1)
+    .filter((frame) => !frame.includes("op-index"))
+    .slice(0, 2).map((frame) => frame.trim().replace(/^at /, "")).join(" < ");
+  logger.warn(`[op-index] a query read ${pass.read} ops on its own thread in ${Math.round(pass.ms)} ms, before the background pass had them`
+    + (askedBy ? ` (asked by ${askedBy})` : ""));
+}
+
 let index: OpScanner<OpFacts> | undefined;
 /** One index per process, over the store op-store reads (OPS_BASE). */
-const theIndex = (): OpScanner<OpFacts> => (index ??= createOpScanner(OPS_BASE, readOp, opFactsOf, isSettled));
+const theIndex = (): OpScanner<OpFacts> => (index ??= createOpScanner(OPS_BASE, readOp, opFactsOf, isSettled, reportBulkRead));
 
 /** The ops whose facts match, read fresh from the store, in no set order. */
 export function opsWhere(matches: (facts: OpFacts) => boolean): Op[] {
